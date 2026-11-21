@@ -59,6 +59,15 @@
             <label class="popover-item"><input type="checkbox" data-section-toggle="genOutput" checked><span>Gen Output</span></label>
             <label class="popover-item"><input type="checkbox" data-section-toggle="sessionTotals" checked><span>Session Total</span></label>
             <label class="popover-item"><input type="checkbox" data-section-toggle="telemetry" checked><span>Telemetry</span></label>
+            <div class="hairline-divider"></div>
+            <div class="popover-title">Compact Alarm</div>
+            <div class="popover-alarm-row font-mono" id="compactAlarmMenuRow">
+              <button type="button" class="alarm-opt-btn" data-alarm-pct="0">Off</button>
+              <button type="button" class="alarm-opt-btn" data-alarm-pct="30">30%</button>
+              <button type="button" class="alarm-opt-btn" data-alarm-pct="50">50%</button>
+              <button type="button" class="alarm-opt-btn" data-alarm-pct="65">65%</button>
+              <button type="button" class="alarm-opt-btn" data-alarm-pct="80">80%</button>
+            </div>
           </div>
         </div>
       </div>
@@ -131,12 +140,15 @@
 
             <!-- 3. Context Window -->
             <div class="hud-kpi-card" id="hudContextCard">
-              <div class="hud-kpi-label">
-                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                  <rect x="2" y="3" width="12" height="10" rx="2"/>
-                  <path d="M5 7h6M5 10h4"/>
-                </svg>
-                <span>Context window</span>
+              <div class="hud-kpi-head">
+                <div class="hud-kpi-label">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <rect x="2" y="3" width="12" height="10" rx="2"/>
+                    <path d="M5 7h6M5 10h4"/>
+                  </svg>
+                  <span>Context window</span>
+                </div>
+                <button type="button" class="compact-alarm-tag font-mono" id="hudCompactAlarmBtn" title="Context compact alarm threshold (click to cycle)">@50%</button>
               </div>
               <div class="hud-kpi-value font-mono" id="hudContextValue">0.0%</div>
               <div class="hud-kpi-sub font-mono">
@@ -195,13 +207,15 @@
             <div class="hero-left">
               <span class="hero-percent" id="contextPctValue">0.0% used</span>
               <span class="health-status-text" id="healthBadge">Optimal</span>
+              <button type="button" class="compact-alarm-tag font-mono" id="windowCompactAlarmBtn" title="Context compact alarm threshold (click to cycle)">@50%</button>
             </div>
             <span class="hero-ratio" id="windowRatioVal" title="Active / Max Context Tokens">0 / 1M</span>
           </div>
 
           <div class="section-body">
-            <div class="bar-track">
+            <div class="bar-track" id="contextBarTrack">
               <div class="bar-fill" id="contextProgressBar" style="width: 0%"></div>
+              <div class="bar-alarm-tick" id="contextAlarmTick" style="left: 50%;" title="Compact alarm threshold"></div>
             </div>
 
             <div class="hero-meta-row font-mono">

@@ -434,6 +434,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 
 .bar-track {
+  position: relative;
   width: 100%;
   height: 8px;
   border-radius: 999px;
@@ -445,6 +446,18 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border-radius: 999px;
   background: var(--tm-ok);
   transition: width 300ms var(--ease-out), background-color 300ms var(--ease-out);
+}
+.bar-alarm-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  background: color-mix(in srgb, var(--cx-fg-muted) 45%, transparent);
+  pointer-events: none;
+  transition: left 200ms var(--ease-out), background-color 200ms var(--ease-out);
+}
+.bar-alarm-tick.triggered {
+  background: var(--tm-warn);
 }
 
 .hero-meta-row {
@@ -1776,4 +1789,72 @@ body.simple-mode #telemetryMenuBtn {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Subtle Context Compact Alarm tag & menu selector */
+.hud-kpi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.compact-alarm-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--cx-fg-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
+  opacity: 0.72;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 140ms var(--ease-out), color 140ms var(--ease-out), background-color 140ms var(--ease-out), border-color 140ms var(--ease-out);
+}
+.compact-alarm-tag:hover {
+  opacity: 1;
+  background: var(--cx-fill);
+  color: var(--cx-fg);
+}
+.compact-alarm-tag.off {
+  opacity: 0.45;
+}
+.compact-alarm-tag.triggered {
+  opacity: 1;
+  color: var(--tm-warn);
+  background: color-mix(in srgb, var(--tm-warn) 12%, transparent);
+  border-color: color-mix(in srgb, var(--tm-warn) 28%, transparent);
+  font-weight: 600;
+}
+.popover-alarm-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px 4px;
+}
+.alarm-opt-btn {
+  flex: 1;
+  padding: 3px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--cx-border);
+  background: var(--cx-fill);
+  color: var(--cx-fg-muted);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms var(--ease-out);
+}
+.alarm-opt-btn:hover {
+  color: var(--cx-fg);
+  background: var(--cx-hover);
+}
+.alarm-opt-btn.active {
+  color: var(--tm-warn);
+  background: color-mix(in srgb, var(--tm-warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--tm-warn) 35%, transparent);
+  font-weight: 600;
 }

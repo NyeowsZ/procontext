@@ -190,8 +190,11 @@ export function updatePersistedAccountCacheLifespan(accountKey, cascadeId, convL
         if (stats.maxWarmGapMs !== null && stats.maxWarmGapMs !== undefined) {
           a.maxWarmGapMs = a.maxWarmGapMs === null ? stats.maxWarmGapMs : Math.max(a.maxWarmGapMs, stats.maxWarmGapMs);
         }
-        if (stats.minColdGapMs !== null && stats.minColdGapMs !== undefined) {
+        if (stats.minColdGapMs !== null && stats.minColdGapMs !== undefined && stats.minColdGapMs >= 4.5 * 60 * 1000) {
           a.minColdGapMs = a.minColdGapMs === null ? stats.minColdGapMs : Math.min(a.minColdGapMs, stats.minColdGapMs);
+        }
+        if (a.maxWarmGapMs !== null && a.minColdGapMs !== null && a.minColdGapMs <= a.maxWarmGapMs) {
+          a.minColdGapMs = null;
         }
         a.warmSamples += (stats.warmSamples || 0);
         a.coldSamples += (stats.coldSamples || 0);

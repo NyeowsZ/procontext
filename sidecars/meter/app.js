@@ -54,6 +54,9 @@
   if (!['full', 'simple', 'hud'].includes(viewMode)) viewMode = 'full';
   let simpleMode = viewMode === 'simple';
   const SIMPLE_TELEMETRY_LIMIT = 5;
+  const COMPACT_ALARM_PRESETS = [30, 50, 65, 80, 0];
+  let compactAlarmPct = parseInt(localStorage.getItem('token_meter_compact_alarm_pct') ?? '50', 10);
+  if (!COMPACT_ALARM_PRESETS.includes(compactAlarmPct)) compactAlarmPct = 50;
   let defaultItemsCompact = localStorage.getItem('token_meter_items_default_compact') === 'true';
   let itemCompactOverrides = new Set();
   try {
@@ -138,6 +141,9 @@
 
   const contextPctValue = document.getElementById('contextPctValue');
   const healthBadge = document.getElementById('healthBadge');
+  const windowCompactAlarmBtn = document.getElementById('windowCompactAlarmBtn');
+  const hudCompactAlarmBtn = document.getElementById('hudCompactAlarmBtn');
+  const contextAlarmTick = document.getElementById('contextAlarmTick');
   const windowRatioVal = document.getElementById('windowRatioVal');
   const contextProgressBar = document.getElementById('contextProgressBar');
   const activeTokensVal = document.getElementById('activeTokensVal');
@@ -446,6 +452,7 @@
 
     contextProgressBar.style.width = `${pct}%`;
     contextProgressBar.style.backgroundColor = color;
+    updateCompactAlarmUi(pct);
 
     if (activeTokensVal) activeTokensVal.textContent = `${formatNum(activeTok)} active`;
     remainingTokensVal.textContent = `${formatCompactNum(remTok)} free`;
@@ -574,7 +581,89 @@
   }
 
   // ---------- Coding HUD Mode (2×2 KPI Sparkline Grid + 4-Cell Stat Strip) ----------
-  function buildAreaSparklineSvg(values, colorVar, uid, minVal = null, maxVal = null) {
+  function formatCompactClean(num) {
+    const val = Number(num) || 0;
+    if (Math.abs(val) >= 1_000_000) {
+      return (val / 1_000_000).toFixed(2).replace(/\.?0+$/, '') + 'M';
+    }
+    if (Math.abs(val) >= 100_000) {
+      return Math.round(val / 1_000) + 'K';
+    }
+    if (Math.abs(val) >= 10_000) {
+      return (val / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+    }
+    if (Math.abs(val) >= 1_000) {
+      return (val / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+    }
+    return Math.round(val).toLocaleString();
+  }
+
+  function formatTtlBoundShort(ms) {
+    if (ms == null || ms < 0) return '—';
+    const sec = Math.round(ms / 1000);
+    if (sec < 60) return `${sec}s`;
+    const mins = Math.floor(sec / 60);
+    const remSec = sec % 60;
+    if (mins >= 4 && remSec < 15) return `${mins}m`;
+    if (mins >= 4 && remSec > 45) return `${mins + 1}m`;
+    return remSec > 0 ? `${mins}m ${remSec}s` : `${mins}m`;
+  }
+
+  function updateCompactAlarmUi(currentPct = null) {
+    const pct = currentPct != null
+      ? currentPct
+      : (currentTelemetry?.liveContext?.consumptionPct || 0);
+    const isOff = !compactAlarmPct || compactAlarmPct <= 0;
+    const isTriggered = !isOff && pct >= compactAlarmPct;
+    const label = isOff ? 'Alarm off' : (isTriggered ? `Compact ≥${compactAlarmPct}%` : `@${compactAlarmPct}%`);
+    const title = isOff
+      ? 'Context compact alarm is Off (click to set threshold)'
+      : (isTriggered
+          ? `Context (${pct.toFixed(1)}%) reached your ${compactAlarmPct}% compact threshold — consider running /compact (click to cycle)`
+          : `Subtle compact alarm set at ${compactAlarmPct}% context usage (click to cycle)`);
+
+    [windowCompactAlarmBtn, hudCompactAlarmBtn].forEach((btn) => {
+      if (!btn) return;
+      btn.textContent = label;
+      btn.title = title;
+      btn.classList.toggle('triggered', isTriggered);
+      btn.classList.toggle('off', isOff);
+    });
+
+    if (contextAlarmTick) {
+      if (isOff) {
+        contextAlarmTick.style.display = 'none';
+      } else {
+        contextAlarmTick.style.display = '';
+        contextAlarmTick.style.left = `${compactAlarmPct}%`;
+        contextAlarmTick.classList.toggle('triggered', isTriggered);
+        contextAlarmTick.title = `Compact alarm threshold: ${compactAlarmPct}%`;
+      }
+    }
+
+    document.querySelectorAll('[data-alarm-pct]').forEach((btn) => {
+      const v = parseInt(btn.dataset.alarmPct, 10);
+      btn.classList.toggle('active', v === compactAlarmPct);
+    });
+  }
+
+  function setCompactAlarmPct(nextVal) {
+    compactAlarmPct = COMPACT_ALARM_PRESETS.includes(nextVal) ? nextVal : 50;
+    try {
+      localStorage.setItem('token_meter_compact_alarm_pct', String(compactAlarmPct));
+    } catch {}
+    updateCompactAlarmUi();
+    if (currentTelemetry) renderCodingHud();
+  }
+
+  function cycleCompactAlarmPct(e) {
+    if (e) e.stopPropagation();
+    const idx = COMPACT_ALARM_PRESETS.indexOf(compactAlarmPct);
+    const next = COMPACT_ALARM_PRESETS[(idx + 1) % COMPACT_ALARM_PRESETS.length];
+    setCompactAlarmPct(next);
+  }
+
+  function buildAreaSparklineSvg(values, colorVar, uid, minVal = null, maxVal = null, alarmThresholdVal = null) {
     const W = 180;
     const H = 38;
     const topY = 5;
@@ -603,6 +692,13 @@
     }
     const areaD = `${d} L ${W} ${H} L 0 ${H} Z`;
 
+    let alarmLineHtml = '';
+    if (alarmThresholdVal != null && alarmThresholdVal > lo && alarmThresholdVal <= hi) {
+      const alarmNorm = Math.min(1, Math.max(0, (alarmThresholdVal - lo) / span));
+      const alarmY = Number((botY - alarmNorm * (botY - topY)).toFixed(1));
+      alarmLineHtml = `<line x1="0" y1="${alarmY}" x2="${W}" y2="${alarmY}" stroke="var(--tm-warn)" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="3 3"/>`;
+    }
+
     return `
       <svg class="hud-spark-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <defs>
@@ -611,6 +707,7 @@
             <stop offset="100%" stop-color="${colorVar}" stop-opacity="0.0"/>
           </linearGradient>
         </defs>
+        ${alarmLineHtml}
         <path d="${areaD}" fill="url(#${uid})"/>
         <path d="${d}" fill="none" stroke="${colorVar}" stroke-width="1.75" stroke-linecap="round"/>
       </svg>
@@ -678,10 +775,10 @@
 
   function formatSecShort(sec) {
     if (sec == null || !isFinite(sec) || sec < 0) return '—';
-    if (sec < 60) return `${sec.toFixed(1)}s`;
+    if (sec < 100) return `${sec.toFixed(1)}s`;
     const m = Math.floor(sec / 60);
     const s = Math.round(sec % 60);
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+    return `${m}m ${s}s`;
   }
 
   function renderHudTtlLive() {
@@ -701,62 +798,108 @@
       : cl.lastChatCompletedAtMs;
     const elapsedMs = lastCompletedMs ? Math.max(0, Date.now() - lastCompletedMs) : null;
 
+    const DEFAULT_PROVIDER_TTL_MS = 5 * 60 * 1000; // standard 5m prompt cache window
     let valText = '—';
     let badgeText = 'Idle';
     let badgeCls = 'neutral';
-    let metaText = 'No TTL samples yet';
+    let metaText = 'No samples yet';
     let ratio = 1;
     let curveState = 'learning';
 
     if (!stat || stat.status === 'no_data') {
-      valText = elapsedMs != null ? formatDurationShort(elapsedMs) : '—';
-      const hadCache = Boolean(currentTelemetry.latestTurn?.cacheReadTokens > 0);
-      badgeText = hadCache ? 'Warm' : 'Learning';
-      badgeCls = hadCache ? 'up' : 'neutral';
-      metaText = elapsedMs != null ? 'since last chat' : 'waiting for turns';
-      // Default 5-min reference decay while learning
-      ratio = elapsedMs != null ? Math.max(0.08, 1 - elapsedMs / (5 * 60 * 1000)) : 1;
-      curveState = hadCache ? 'warm' : 'learning';
-    } else {
-      const boundText = stat.status === 'bracketed'
-        ? `TTL ~${formatDurationShort(stat.maxWarmGapMs)}–${formatDurationShort(stat.minColdGapMs)}`
-        : (stat.status === 'lower_bound'
-            ? `TTL ≥ ${formatDurationShort(stat.maxWarmGapMs)}`
-            : `TTL < ${formatDurationShort(stat.minColdGapMs)}`);
+      if (elapsedMs != null && elapsedMs < DEFAULT_PROVIDER_TTL_MS) {
+        valText = `~${formatDurationShort(DEFAULT_PROVIDER_TTL_MS - elapsedMs)}`;
+        const hadCache = Boolean(currentTelemetry.latestTurn?.cacheReadTokens > 0);
+        badgeText = hadCache ? 'Warm' : 'Est 5m';
+        badgeCls = hadCache ? 'up' : 'neutral';
+        metaText = `idle ${formatDurationShort(elapsedMs)} · ~5m est`;
+        ratio = Math.max(0.05, 1 - elapsedMs / DEFAULT_PROVIDER_TTL_MS);
+        curveState = hadCache ? 'warm' : 'learning';
+      } else {
+        valText = elapsedMs != null ? 'Expired' : '—';
+        badgeText = elapsedMs != null ? 'Cold' : 'Idle';
+        badgeCls = elapsedMs != null ? 'down' : 'neutral';
+        metaText = elapsedMs != null ? `idle ${formatDurationShort(elapsedMs)}` : 'waiting for turns';
+        ratio = elapsedMs != null ? 0 : 1;
+        curveState = elapsedMs != null ? 'cold' : 'learning';
+      }
+    } else if (stat.status === 'bracketed') {
+      const boundText = `~${formatTtlBoundShort(stat.maxWarmGapMs)}–${formatTtlBoundShort(stat.minColdGapMs)}`;
       metaText = boundText;
-
-      const ceilMs = stat.minColdGapMs || (stat.maxWarmGapMs ? stat.maxWarmGapMs * 1.35 : 5 * 60 * 1000);
+      const ceilMs = stat.minColdGapMs;
       ratio = elapsedMs != null && ceilMs > 0 ? Math.max(0, Math.min(1, 1 - elapsedMs / ceilMs)) : 1;
 
       if (elapsedMs == null) {
-        valText = boundText.replace(/^TTL\s+/, '');
+        valText = boundText;
         badgeText = 'Ready';
         badgeCls = 'neutral';
         curveState = 'warm';
-      } else if (stat.maxWarmGapMs != null && elapsedMs < stat.maxWarmGapMs) {
+      } else if (elapsedMs < stat.maxWarmGapMs) {
         valText = formatDurationShort(stat.maxWarmGapMs - elapsedMs);
         badgeText = 'Warm';
         badgeCls = 'up';
         curveState = 'warm';
-      } else if (stat.minColdGapMs != null && elapsedMs < stat.minColdGapMs) {
+      } else if (elapsedMs < stat.minColdGapMs) {
         valText = `≤ ${formatDurationShort(stat.minColdGapMs - elapsedMs)}`;
         badgeText = 'Expiring';
         badgeCls = 'warn';
         curveState = 'expiring';
-      } else if (stat.minColdGapMs != null) {
+      } else {
         valText = 'Expired';
         badgeText = 'Cold';
         badgeCls = 'down';
-        metaText = `${formatDurationShort(elapsedMs)} idle · ${boundText}`;
+        metaText = `idle ${formatDurationShort(elapsedMs)} · ${boundText}`;
         ratio = 0;
         curveState = 'cold';
+      }
+    } else if (stat.status === 'lower_bound') {
+      // Only warm hits observed so far: use max(5m standard TTL, maxWarmGapMs) as estimated ceiling
+      const estCeilMs = Math.max(DEFAULT_PROVIDER_TTL_MS, stat.maxWarmGapMs);
+      const provenText = `proven ≥${formatTtlBoundShort(stat.maxWarmGapMs)}`;
+      ratio = elapsedMs != null && estCeilMs > 0 ? Math.max(0, Math.min(1, 1 - elapsedMs / estCeilMs)) : 1;
+
+      if (elapsedMs == null) {
+        valText = `≥${formatTtlBoundShort(stat.maxWarmGapMs)}`;
+        badgeText = 'Ready';
+        badgeCls = 'neutral';
+        metaText = provenText;
+        curveState = 'warm';
+      } else if (elapsedMs < stat.maxWarmGapMs) {
+        valText = `~${formatDurationShort(estCeilMs - elapsedMs)}`;
+        badgeText = 'Warm';
+        badgeCls = 'up';
+        metaText = provenText;
+        curveState = 'warm';
+      } else if (elapsedMs < estCeilMs) {
+        valText = `~${formatDurationShort(estCeilMs - elapsedMs)}`;
+        badgeText = 'Warm';
+        badgeCls = 'up';
+        metaText = `${provenText} · ~5m est`;
+        curveState = ratio < 0.25 ? 'expiring' : 'warm';
       } else {
-        // lower_bound only and elapsed > maxWarmGapMs
         valText = `${formatDurationShort(elapsedMs)}`;
-        badgeText = 'Unbounded';
+        badgeText = 'Expiring';
         badgeCls = 'warn';
-        metaText = `past ${formatDurationShort(stat.maxWarmGapMs)} warm max`;
+        metaText = `idle · ${provenText}`;
+        ratio = 0.05;
         curveState = 'expiring';
+      }
+    } else {
+      // upper_bound only
+      const ceilMs = stat.minColdGapMs || DEFAULT_PROVIDER_TTL_MS;
+      metaText = `<${formatTtlBoundShort(ceilMs)} window`;
+      ratio = elapsedMs != null && ceilMs > 0 ? Math.max(0, Math.min(1, 1 - elapsedMs / ceilMs)) : 1;
+      if (elapsedMs != null && elapsedMs < ceilMs) {
+        valText = `≤ ${formatDurationShort(ceilMs - elapsedMs)}`;
+        badgeText = ratio < 0.25 ? 'Expiring' : 'Warm';
+        badgeCls = ratio < 0.25 ? 'warn' : 'up';
+        curveState = ratio < 0.25 ? 'expiring' : 'warm';
+      } else {
+        valText = 'Expired';
+        badgeText = 'Cold';
+        badgeCls = 'down';
+        ratio = 0;
+        curveState = 'cold';
       }
     }
 
@@ -789,39 +932,47 @@
       : (data.cumulative || {});
     const model = filteredModel || data.activeModel || {};
 
-    // 2. Cache Hit Rate Card (latest + min · avg + sparkline)
+    // 2. Cache Hit Rate Card (latest + warm min · avg + sparkline without compaction cliffs)
     const hudCacheValue = document.getElementById('hudCacheValue');
     const hudCacheDelta = document.getElementById('hudCacheDelta');
     const hudCacheMeta = document.getElementById('hudCacheMeta');
     const hudCacheSpark = document.getElementById('hudCacheSpark');
 
-    const cacheSeries = relevantTurns.map(t => parseFloat(t.cacheEfficiencyPct) || 0);
-    const latestCache = cacheSeries.length ? cacheSeries[cacheSeries.length - 1] : (parseFloat(latest.cacheEfficiencyPct) || 0);
-    const prevCache = cacheSeries.length > 1 ? cacheSeries[cacheSeries.length - 2] : latestCache;
+    const rawCacheSeries = relevantTurns.map(t => parseFloat(t.cacheEfficiencyPct) || 0);
+    // Warm turns exclude initial cold turn #1, compaction reset turns, and cold misses
+    const warmTurns = relevantTurns.filter((t, idx) =>
+      idx > 0 && !t.isCompaction && t.cacheStatus !== 'cold_miss' && t.cacheStatus !== 'model_switch_miss' && (parseFloat(t.cacheEfficiencyPct) || 0) > 25
+    );
+    const warmPcts = warmTurns.map(t => parseFloat(t.cacheEfficiencyPct) || 0);
+    const latestCache = rawCacheSeries.length ? rawCacheSeries[rawCacheSeries.length - 1] : (parseFloat(latest.cacheEfficiencyPct) || 0);
+    const prevCache = warmPcts.length > 1 ? warmPcts[warmPcts.length - 2] : (rawCacheSeries.length > 1 ? rawCacheSeries[rawCacheSeries.length - 2] : latestCache);
     const cacheDiff = latestCache - prevCache;
-    const warmSeries = cacheSeries.filter(v => v > 0);
-    const minCache = warmSeries.length ? Math.min(...warmSeries) : (cacheSeries.length ? Math.min(...cacheSeries) : 0);
-    const avgCache = parseFloat(cum.overallCacheSavingsPct) || (cacheSeries.length ? cacheSeries.reduce((a, b) => a + b, 0) / cacheSeries.length : 0);
+    const minCache = warmPcts.length ? Math.min(...warmPcts) : (rawCacheSeries.length ? Math.min(...rawCacheSeries) : 0);
+    const avgCache = warmPcts.length
+      ? (warmPcts.reduce((a, b) => a + b, 0) / warmPcts.length)
+      : (parseFloat(cum.overallCacheSavingsPct) || 0);
+    const sparkSeries = warmPcts.length >= 2 ? warmPcts.slice(-18) : rawCacheSeries.slice(-18);
 
     if (hudCacheValue) hudCacheValue.textContent = `${latestCache.toFixed(1)}%`;
     if (hudCacheDelta) {
-      if (cacheSeries.length > 1 && Math.abs(cacheDiff) >= 0.1) {
+      if (warmPcts.length > 1 && Math.abs(cacheDiff) >= 0.1 && !latest.isCompaction) {
         const up = cacheDiff >= 0;
         hudCacheDelta.textContent = `${up ? '↑' : '↓'} ${Math.abs(cacheDiff).toFixed(1)}%`;
         hudCacheDelta.className = `hud-delta-pill ${up ? 'up' : 'warn'}`;
       } else {
-        hudCacheDelta.textContent = latestCache >= 80 ? 'High' : (latestCache >= 50 ? 'Mid' : 'Low');
+        hudCacheDelta.textContent = latestCache >= 80 ? 'High' : (latestCache >= 50 ? 'Mid' : 'Cold');
         hudCacheDelta.className = `hud-delta-pill ${latestCache >= 80 ? 'up' : (latestCache >= 50 ? 'warn' : 'down')}`;
       }
     }
     if (hudCacheMeta) {
-      hudCacheMeta.textContent = `min ${minCache.toFixed(0)}% · avg ${avgCache.toFixed(1)}%`;
+      hudCacheMeta.textContent = `min ${minCache.toFixed(1)}% · avg ${avgCache.toFixed(1)}%`;
     }
     if (hudCacheSpark) {
-      hudCacheSpark.innerHTML = buildAreaSparklineSvg(cacheSeries.slice(-18), 'var(--tm-cache)', 'hudCacheGrad', 0, 100);
+      const loBound = sparkSeries.length ? Math.max(0, Math.min(...sparkSeries) - 10) : 0;
+      hudCacheSpark.innerHTML = buildAreaSparklineSvg(sparkSeries, 'var(--tm-cache)', 'hudCacheGrad', loBound, 100);
     }
 
-    // 3. Context Window Card (% used + free + sparkline)
+    // 3. Context Window Card (% used + used / max · free + sparkline + subtle compact alarm)
     const hudContextValue = document.getElementById('hudContextValue');
     const hudContextDelta = document.getElementById('hudContextDelta');
     const hudContextMeta = document.getElementById('hudContextMeta');
@@ -834,28 +985,38 @@
     const ctxSeries = relevantTurns.map(t => maxLim > 0 ? ((t.totalTurnTokens || 0) / maxLim) * 100 : 0);
     const prevCtxPct = ctxSeries.length > 1 ? ctxSeries[ctxSeries.length - 2] : ctxPct;
     const ctxDiff = ctxPct - prevCtxPct;
-    const ctxColor = ctxPct >= 80 ? 'var(--tm-crit)' : (ctxPct >= 50 ? 'var(--tm-warn)' : 'var(--cx-primary)');
+    const alarmTriggered = compactAlarmPct > 0 && ctxPct >= compactAlarmPct;
+    const ctxColor = ctxPct >= 80 ? 'var(--tm-crit)' : ((ctxPct >= 50 || alarmTriggered) ? 'var(--tm-warn)' : 'var(--cx-primary)');
+
+    updateCompactAlarmUi(ctxPct);
 
     if (hudContextValue) hudContextValue.textContent = `${ctxPct.toFixed(1)}%`;
     if (hudContextDelta) {
       if (ctxSeries.length > 1 && Math.abs(ctxDiff) >= 0.05) {
         const up = ctxDiff >= 0;
         hudContextDelta.textContent = `${up ? '↑' : '↓'} ${Math.abs(ctxDiff).toFixed(1)}%`;
-        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : (ctxPct >= 50 ? 'warn' : 'neutral')}`;
+        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : ((ctxPct >= 50 || alarmTriggered) ? 'warn' : 'neutral')}`;
       } else {
         hudContextDelta.textContent = ctxPct >= 80 ? 'Critical' : (ctxPct >= 50 ? 'Moderate' : 'Optimal');
         hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : (ctxPct >= 50 ? 'warn' : 'up')}`;
       }
     }
     if (hudContextMeta) {
-      hudContextMeta.textContent = `${formatCompactNum(remTok)} free · ${formatCompactNum(activeTok)}`;
+      hudContextMeta.textContent = `${formatCompactClean(activeTok)} / ${formatCompactClean(maxLim)} · ${formatCompactClean(remTok)} free`;
     }
     if (hudContextSpark) {
-      const ceil = Math.max(20, ...ctxSeries, ctxPct);
-      hudContextSpark.innerHTML = buildAreaSparklineSvg(ctxSeries.slice(-18), ctxColor, 'hudCtxGrad', 0, ceil);
+      const ceil = Math.max(25, compactAlarmPct > 0 ? compactAlarmPct * 1.15 : 25, ...ctxSeries, ctxPct);
+      hudContextSpark.innerHTML = buildAreaSparklineSvg(
+        ctxSeries.slice(-18),
+        ctxColor,
+        'hudCtxGrad',
+        0,
+        ceil,
+        compactAlarmPct > 0 ? compactAlarmPct : null
+      );
     }
 
-    // 4. Quota Remaining Card (active 5h & weekly % left + reset timer)
+    // 4. Quota Remaining Card (strictly match active model's actual pool so Argon doesn't pick Claude's 5h pool!)
     const hudQuotaValue = document.getElementById('hudQuotaValue');
     const hudQuotaWeeklyBadge = document.getElementById('hudQuotaWeeklyBadge');
     const hudQuotaMeta = document.getElementById('hudQuotaMeta');
@@ -864,32 +1025,39 @@
     const activeModelName = filteredModel?.displayName || latest.modelDisplayName || model.displayName || '';
     const pools = globalUsageData?.quotaPools || [];
     const lowerMod = activeModelName.toLowerCase();
-    const matchPool = (winType) => pools.find(p =>
-      (p.windowType === 'weekly' ? 'weekly' : '5h') === winType &&
-      ((p.models || []).some(m => m.toLowerCase().includes(lowerMod)) ||
-       (p.correlation?.byModel || []).some(m => m.model.toLowerCase().includes(lowerMod)))
-    ) || pools.find(p => (p.windowType === 'weekly' ? 'weekly' : '5h') === winType) || null;
+    const poolMatchesActiveModel = (p) => {
+      if (!lowerMod) return false;
+      return (p.models || []).some(m => m.toLowerCase() === lowerMod || m.toLowerCase().includes(lowerMod)) ||
+             (p.correlation?.byModel || []).some(m => m.model.toLowerCase() === lowerMod || m.model.toLowerCase().includes(lowerMod));
+    };
 
-    const pool5h = matchPool('5h');
-    const poolWk = matchPool('weekly');
-    const primaryPool = pool5h || poolWk;
+    const matched5h = pools.find(p => (p.windowType === 'weekly' ? 'weekly' : '5h') === '5h' && poolMatchesActiveModel(p)) || null;
+    const matchedWk = pools.find(p => p.windowType === 'weekly' && poolMatchesActiveModel(p)) || null;
+    const activeBrand = brandOf(activeModelName);
+    const brandFallbackPool = (!matched5h && !matchedWk)
+      ? (pools.find(p => (p.models || []).some(m => brandOf(m) === activeBrand)) || pools[0] || null)
+      : null;
+
+    const primaryPool = matched5h || matchedWk || brandFallbackPool;
 
     if (primaryPool) {
       const remPct = Math.max(0, Math.min(100, primaryPool.remainingPct ?? (100 - (primaryPool.usedPct || 0))));
+      const isWeeklyPrimary = primaryPool.windowType === 'weekly';
       if (hudQuotaValue) hudQuotaValue.textContent = `${remPct.toFixed(1)}%`;
       if (hudQuotaWeeklyBadge) {
-        if (poolWk) {
-          const wkRem = Math.max(0, Math.min(100, poolWk.remainingPct ?? (100 - (poolWk.usedPct || 0))));
+        if (!isWeeklyPrimary && matchedWk) {
+          const wkRem = Math.max(0, Math.min(100, matchedWk.remainingPct ?? (100 - (matchedWk.usedPct || 0))));
           hudQuotaWeeklyBadge.textContent = `Wk ${wkRem.toFixed(0)}%`;
           hudQuotaWeeklyBadge.className = `hud-delta-pill ${wkRem <= 20 ? 'down' : (wkRem <= 50 ? 'warn' : 'up')}`;
         } else {
-          hudQuotaWeeklyBadge.textContent = '5h left';
+          hudQuotaWeeklyBadge.textContent = isWeeklyPrimary ? 'Weekly' : '5h pool';
           hudQuotaWeeklyBadge.className = `hud-delta-pill ${remPct <= 20 ? 'down' : (remPct <= 50 ? 'warn' : 'up')}`;
         }
       }
       if (hudQuotaMeta) {
         const resetTxt = primaryPool.resetTime ? `Resets ${formatCountdown(primaryPool.msUntilReset)}` : primaryPool.label;
         hudQuotaMeta.textContent = resetTxt;
+        hudQuotaMeta.title = `${primaryPool.label}: ${remPct.toFixed(1)}% remaining`;
       }
       if (hudQuotaSpark) {
         const qState = remPct <= 20 ? 'cold' : (remPct <= 50 ? 'expiring' : 'warm');
@@ -898,7 +1066,7 @@
     } else {
       if (hudQuotaValue) hudQuotaValue.textContent = '—';
       if (hudQuotaWeeklyBadge) {
-        hudQuotaWeeklyBadge.textContent = 'Wk —';
+        hudQuotaWeeklyBadge.textContent = 'Pool —';
         hudQuotaWeeklyBadge.className = 'hud-delta-pill neutral';
       }
       if (hudQuotaMeta) hudQuotaMeta.textContent = 'No pool data';
@@ -911,7 +1079,7 @@
     const hudDurSub = document.getElementById('hudDurSub');
     const durs = relevantTurns
       .map(t => (t.completedAtMs && t.createdAtMs && t.completedAtMs >= t.createdAtMs) ? (t.completedAtMs - t.createdAtMs) / 1000 : null)
-      .filter(v => v != null && v >= 0 && v < 3600);
+      .filter(v => v != null && v >= 0.05 && v < 1800);
     const latestDur = durs.length ? durs[durs.length - 1] : null;
     const avgDur = durs.length ? durs.reduce((a, b) => a + b, 0) / durs.length : null;
     const maxDur = durs.length ? Math.max(...durs) : null;
@@ -921,22 +1089,22 @@
     // Cell 2: New input / turn (latest + min · avg)
     const hudInValue = document.getElementById('hudInValue');
     const hudInSub = document.getElementById('hudInSub');
-    const inSeries = relevantTurns.map(t => t.inputTokens || 0);
+    const inSeries = relevantTurns.map(t => t.inputTokens || 0).filter(v => v > 0);
     const latestIn = latest.inputTokens || (inSeries.length ? inSeries[inSeries.length - 1] : 0);
     const minIn = inSeries.length ? Math.min(...inSeries) : 0;
     const avgIn = inSeries.length ? Math.round(inSeries.reduce((a, b) => a + b, 0) / inSeries.length) : 0;
-    if (hudInValue) hudInValue.textContent = formatCompactNum(latestIn);
-    if (hudInSub) hudInSub.textContent = `min ${formatCompactNum(minIn)} · avg ${formatCompactNum(avgIn)}`;
+    if (hudInValue) hudInValue.textContent = formatCompactClean(latestIn);
+    if (hudInSub) hudInSub.textContent = `min ${formatCompactClean(minIn)} · avg ${formatCompactClean(avgIn)}`;
 
     // Cell 3: Output / turn (latest + think · avg)
     const hudOutValue = document.getElementById('hudOutValue');
     const hudOutSub = document.getElementById('hudOutSub');
-    const outSeries = relevantTurns.map(t => t.outputTokens || 0);
+    const outSeries = relevantTurns.map(t => t.outputTokens || 0).filter(v => v > 0);
     const latestOut = latest.outputTokens || (outSeries.length ? outSeries[outSeries.length - 1] : 0);
     const latestThink = latest.thinkingTokens || 0;
     const avgOut = outSeries.length ? Math.round(outSeries.reduce((a, b) => a + b, 0) / outSeries.length) : 0;
-    if (hudOutValue) hudOutValue.textContent = formatCompactNum(latestOut);
-    if (hudOutSub) hudOutSub.textContent = `think ${formatCompactNum(latestThink)} · avg ${formatCompactNum(avgOut)}`;
+    if (hudOutValue) hudOutValue.textContent = formatCompactClean(latestOut);
+    if (hudOutSub) hudOutSub.textContent = `think ${formatCompactClean(latestThink)} · avg ${formatCompactClean(avgOut)}`;
 
     // Cell 4: Tool calls (total + unique tools · per-turn avg)
     const hudToolsValue = document.getElementById('hudToolsValue');
@@ -2414,6 +2582,20 @@
       setViewMode(next);
     });
   }
+
+  if (windowCompactAlarmBtn) {
+    windowCompactAlarmBtn.addEventListener('click', cycleCompactAlarmPct);
+  }
+  if (hudCompactAlarmBtn) {
+    hudCompactAlarmBtn.addEventListener('click', cycleCompactAlarmPct);
+  }
+  document.querySelectorAll('[data-alarm-pct]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setCompactAlarmPct(parseInt(btn.dataset.alarmPct, 10));
+    });
+  });
+  updateCompactAlarmUi();
 
   document.querySelectorAll('[data-section-toggle]').forEach((cb) => {
     cb.addEventListener('change', () => {

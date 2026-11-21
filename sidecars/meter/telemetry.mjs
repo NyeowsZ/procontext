@@ -617,7 +617,8 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
     }
 
     // Detect context compaction
-    if (prevPromptTokens > 8000 && promptTokens < prevPromptTokens * 0.7) {
+    const isCompaction = prevPromptTokens > 8000 && promptTokens < prevPromptTokens * 0.7;
+    if (isCompaction) {
       compactions.push({
         turnIndex: idx + 1,
         stepIndices: sIndices,
@@ -655,7 +656,8 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
       createdAtMs,
       completedAtMs,
       gapSincePrevTurnMs,
-      cacheStatus
+      cacheStatus,
+      isCompaction
     };
     turns.push(turnItem);
 
@@ -706,6 +708,8 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
 
   // Burst-resistant survival boundary tracker (only same-model prompt-to-prompt gaps >= 30s)
   const MIN_NON_BURST_MS = 30 * 1000;
+  // Minimum plausible natural TTL expiration gap (4.5 min); shorter misses are prefix rewrites / compactions / restarts
+  const MIN_PLAUSIBLE_COLD_TTL_MS = 4.5 * 60 * 1000;
   function makeLifespanBucket() {
     return {
       maxWarmGapMs: null,
@@ -724,7 +728,13 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
       if (bucket.maxWarmGapMs === null || gapMs > bucket.maxWarmGapMs) {
         bucket.maxWarmGapMs = gapMs;
       }
+      if (bucket.minColdGapMs !== null && bucket.minColdGapMs <= bucket.maxWarmGapMs) {
+        bucket.minColdGapMs = null;
+      }
     } else {
+      // Ignore cold misses shorter than plausible TTL or shorter than already-proven warm survival
+      if (gapMs < MIN_PLAUSIBLE_COLD_TTL_MS) return;
+      if (bucket.maxWarmGapMs !== null && gapMs <= bucket.maxWarmGapMs) return;
       bucket.coldSamples += 1;
       if (bucket.minColdGapMs === null || gapMs < bucket.minColdGapMs) {
         bucket.minColdGapMs = gapMs;
@@ -733,28 +743,33 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
   }
 
   function finalizeLifespan(bucket, isPersisted = false) {
-    const sampleCount = (bucket?.warmSamples || 0) + (bucket?.coldSamples || 0);
-    const hasWarm = bucket?.maxWarmGapMs !== null && bucket?.maxWarmGapMs !== undefined;
-    const hasCold = bucket?.minColdGapMs !== null && bucket?.minColdGapMs !== undefined;
+    const maxWarm = (bucket?.maxWarmGapMs !== null && bucket?.maxWarmGapMs !== undefined) ? bucket.maxWarmGapMs : null;
+    const rawCold = (bucket?.minColdGapMs !== null && bucket?.minColdGapMs !== undefined) ? bucket.minColdGapMs : null;
+    const minCold = (rawCold !== null && rawCold >= MIN_PLAUSIBLE_COLD_TTL_MS && (maxWarm === null || rawCold > maxWarm))
+      ? rawCold
+      : null;
+    const sampleCount = (bucket?.warmSamples || 0) + (minCold !== null ? (bucket?.coldSamples || 0) : 0);
+    const hasWarm = maxWarm !== null;
+    const hasCold = minCold !== null;
     let status = 'no_data';
     let estimatedTtlMs = null;
-    if (hasWarm && hasCold && bucket.minColdGapMs > bucket.maxWarmGapMs) {
+    if (hasWarm && hasCold && minCold > maxWarm) {
       status = 'bracketed';
-      estimatedTtlMs = Math.round((bucket.maxWarmGapMs + bucket.minColdGapMs) / 2);
+      estimatedTtlMs = Math.round((maxWarm + minCold) / 2);
     } else if (hasWarm) {
       status = 'lower_bound';
-      estimatedTtlMs = bucket.maxWarmGapMs;
+      estimatedTtlMs = maxWarm;
     } else if (hasCold) {
       status = 'upper_bound';
-      estimatedTtlMs = bucket.minColdGapMs;
+      estimatedTtlMs = minCold;
     }
     return {
       status,
       sampleCount,
       warmSamples: bucket?.warmSamples || 0,
-      coldSamples: bucket?.coldSamples || 0,
-      maxWarmGapMs: bucket?.maxWarmGapMs ?? null,
-      minColdGapMs: bucket?.minColdGapMs ?? null,
+      coldSamples: minCold !== null ? (bucket?.coldSamples || 0) : 0,
+      maxWarmGapMs: maxWarm,
+      minColdGapMs: minCold,
       estimatedTtlMs,
       isPersisted: Boolean(isPersisted || bucket?.isPersisted)
     };
@@ -807,8 +822,8 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
         promptCacheStatus = promptModelSwitched ? 'model_switch_miss' : 'cold_miss';
       }
 
-      // Record chat-to-chat survival boundary ONLY for same-model gaps >= 30s (ignores short bursts & tool loops)
-      if (!promptModelSwitched && gapSincePrevPromptMs !== null && firstModelName) {
+      // Record chat-to-chat survival boundary ONLY for same-model gaps >= 30s (ignores short bursts, tool loops, & compaction turns)
+      if (!promptModelSwitched && !firstTurn.isCompaction && gapSincePrevPromptMs !== null && firstModelName) {
         recordLifespanSample(overallLifespan, gapSincePrevPromptMs, firstTurnHadCache);
         if (!lifespanByModel[firstModelName]) lifespanByModel[firstModelName] = makeLifespanBucket();
         recordLifespanSample(lifespanByModel[firstModelName], gapSincePrevPromptMs, firstTurnHadCache);

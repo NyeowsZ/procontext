@@ -668,7 +668,7 @@
     const elapsedMs = lastCompletedMs ? Math.max(0, Date.now() - lastCompletedMs) : null;
 
     if (lastChatAgoVal) {
-      lastChatAgoVal.textContent = elapsedMs != null ? `Last chat: ${formatDurationShort(elapsedMs)} ago` : 'Last chat: —';
+      lastChatAgoVal.textContent = elapsedMs != null ? `${formatDurationShort(elapsedMs)} ago` : '—';
     }
 
     if (!cacheLifespanStat) return;

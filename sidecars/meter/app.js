@@ -1589,7 +1589,9 @@
     if (telemetryHeaderToggle) {
       const compact = Boolean(sectionCompact.telemetry);
       telemetryHeaderToggle.setAttribute('aria-expanded', String(!compact));
-      telemetryHeaderToggle.title = `Click to ${compact ? 'expand' : 'compact'} Telemetry`;
+      const activeView = document.querySelector('.view-toggle .toggle-btn.active')?.textContent?.trim() || '—';
+      const compactVal = document.getElementById('telemetryCompactVal')?.textContent?.trim();
+      telemetryHeaderToggle.title = ['Telemetry', `View: ${activeView}`, compactVal ? `Summary: ${compactVal}` : null, `Items: ${compact ? 'collapsed' : 'expanded'}`].filter(Boolean).join('\n');
     }
     document.querySelectorAll('[data-section-toggle]').forEach((cb) => {
       cb.checked = sectionVisibility[cb.dataset.sectionToggle] !== false;
@@ -1614,6 +1616,53 @@
     while (body.firstChild) inner.appendChild(body.firstChild);
     body.appendChild(inner);
   });
+  // Hover info for section headers (computed lazily from the live DOM values)
+  const sectionHoverBuilders = {
+    windowUtil: (t) => [
+      'Context Window',
+      `Used: ${t('contextPctValue')} (${t('healthBadge')})`,
+      `Active / Max: ${t('windowRatioVal')}`,
+      `Remaining: ${t('remainingTokensVal')}`,
+      `Model: ${t('modelNameBadge')}`
+    ],
+    quotas: (t) => {
+      const pools = [...document.querySelectorAll('#sessionQuotaPoolsList .quota-pool-item')]
+        .map((el) => (el.querySelector('.quota-pool-head, .quota-pool-top') || el).textContent.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      return ['Account & Quotas', `Account: ${t('sessionAccountBadge')}`, ...pools];
+    },
+    activeTurn: (t) => [
+      'Active Turn',
+      `Prompt total: ${t('turnPromptTotalVal')} (${t('cacheHitBadge')})`,
+      `Cache read: ${t('turnCacheReadVal')} (${t('turnCachePct')})`,
+      `New input: ${t('turnNewInputVal')} (${t('turnNewInputPct')})`,
+      `Last chat: ${t('lastChatAgoVal')}`,
+      `Cache model: ${t('warmModelPill')}`,
+      `Cache TTL: ${t('cacheLifespanStat')}`
+    ],
+    genOutput: (t) => [
+      'Generation Output',
+      `Total: ${t('turnOutputTotalBadge')} ${t('genOutputLimitVal')}`,
+      `Thinking: ${t('turnThinkingVal')} (${t('turnThinkingPct')})`,
+      `Response & tools: ${t('turnResponseVal')} (${t('turnResponsePct')})`,
+      `Tool calls: ${t('toolCallsTotalVal')} (${t('toolCallsTypesVal')})`
+    ],
+    sessionTotals: (t) => [
+      'Session Totals',
+      `Processed: ${t('sessionProcessedVal')} over ${t('totalTurnsBadge')}`,
+      `Cache read: ${t('sessionCacheTotal')} (${t('sessionCachePct')})`,
+      `Prompt cache rate: ${t('sessionPromptCachePct')}`,
+      `New input: ${t('sessionInputTotal')} (${t('sessionInputPct')})`,
+      `Thinking: ${t('sessionThinkingTotal')} (${t('sessionThinkingPct')})`,
+      `Response & tools: ${t('sessionOutputTotal')} (${t('sessionOutputPct')})`
+    ]
+  };
+  function updateSectionHeaderHover(sec, header) {
+    const build = sectionHoverBuilders[sec.dataset.section];
+    if (!build) return;
+    const t = (id) => (document.getElementById(id)?.textContent || '—').trim();
+    header.title = build(t).join('\n');
+  }
   document.querySelectorAll('.compactable-section').forEach((sec) => {
     const header = sec.querySelector('.section-header-row, .hero-top-row');
     if (!header) return;
@@ -1621,6 +1670,8 @@
     header.setAttribute('role', 'button');
     header.setAttribute('tabindex', '0');
     header.setAttribute('aria-expanded', 'true');
+    header.addEventListener('pointerenter', () => updateSectionHeaderHover(sec, header));
+    header.addEventListener('focus', () => updateSectionHeaderHover(sec, header));
     header.addEventListener('click', (e) => {
       if (e.target.closest('button, input, label, select, .popover-menu')) return;
       toggleSectionCompact(sec.dataset.section);

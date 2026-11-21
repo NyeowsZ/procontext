@@ -1606,6 +1606,14 @@
     applySectionStates();
   }
 
+  // Wrap each section body so compaction can animate height (grid 1fr -> 0fr)
+  document.querySelectorAll('.section-block > .section-body').forEach((body) => {
+    if (body.querySelector(':scope > .section-body-inner')) return;
+    const inner = document.createElement('div');
+    inner.className = 'section-body-inner';
+    while (body.firstChild) inner.appendChild(body.firstChild);
+    body.appendChild(inner);
+  });
   document.querySelectorAll('.compactable-section').forEach((sec) => {
     const header = sec.querySelector('.section-header-row, .hero-top-row');
     if (!header) return;

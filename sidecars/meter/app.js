@@ -1583,8 +1583,7 @@
       sec.classList.toggle('hidden', !visible);
       sec.classList.toggle('compact', compact);
       if (sec.classList.contains('compactable-section')) {
-        sec.setAttribute('aria-expanded', String(!compact));
-        sec.title = `Click to ${compact ? 'expand' : 'compact'}`;
+        sec.querySelector('.section-toggle-header')?.setAttribute('aria-expanded', String(!compact));
       }
     });
     if (telemetryHeaderToggle) {
@@ -1608,14 +1607,18 @@
   }
 
   document.querySelectorAll('.compactable-section').forEach((sec) => {
-    sec.addEventListener('click', (e) => {
-      if (window.getSelection && String(window.getSelection()).length) return;
-      if (e.target.closest('button, input, label, select, .popover-menu, .tool-tree-toggle, .tool-tree-list, .quota-pool-item')) return;
+    const header = sec.querySelector('.section-header-row, .hero-top-row');
+    if (!header) return;
+    header.classList.add('section-toggle-header');
+    header.setAttribute('role', 'button');
+    header.setAttribute('tabindex', '0');
+    header.setAttribute('aria-expanded', 'true');
+    header.addEventListener('click', (e) => {
+      if (e.target.closest('button, input, label, select, .popover-menu')) return;
       toggleSectionCompact(sec.dataset.section);
     });
-    sec.addEventListener('keydown', (e) => {
+    header.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
-      if (e.target !== sec) return;
       e.preventDefault();
       toggleSectionCompact(sec.dataset.section);
     });

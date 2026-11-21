@@ -282,7 +282,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* Click-to-compact for top-level sections */
 .compactable-section {
-  cursor: pointer;
+  cursor: default;
   border-radius: 6px;
   transition: background-color 140ms var(--ease-out);
 }
@@ -1382,3 +1382,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .cache-meta-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .cache-meta-label { color: var(--cx-fg-muted); }
 .cache-meta-val { color: var(--cx-fg); font-weight: 500; white-space: nowrap; }
+
+/* Header-only compaction toggle */
+.section-toggle-header {
+  cursor: pointer;
+  border-radius: 6px;
+  margin: -2px -4px;
+  padding: 2px 4px;
+  transition: background-color 140ms var(--ease-out);
+}
+.section-toggle-header:hover { background: var(--cx-hover); }
+.section-toggle-header:active { background: var(--cx-press); }
+.section-toggle-header:focus-visible { outline: 2px solid var(--cx-ring); outline-offset: 1px; }

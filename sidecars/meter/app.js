@@ -628,6 +628,21 @@
     return `${gapPart}${mod}`;
   }
 
+  function renderCacheStatusChips(gapMs, status, modelShort, prevModelShort) {
+    const mod = escapeHtml(modelShort || 'Model');
+    const prev = escapeHtml(prevModelShort || '?');
+    const map = {
+      initial:           { cls: 'initial', label: 'Initial',    sub: mod },
+      warm_hit:          { cls: 'warm',    label: 'Warm Hit',   sub: mod },
+      cross_model_hit:   { cls: 'warm',    label: 'Warm Hit',   sub: `${prev} → ${mod}` },
+      model_switch_miss: { cls: 'switch',  label: 'Cold Switch', sub: `${prev} → ${mod}` },
+      cold_miss:         { cls: 'cold',    label: 'Cold Miss',  sub: mod }
+    };
+    const m = map[status];
+    const gap = gapMs != null ? `<span class="cache-chip gap" title="Time since previous request">${escapeHtml(formatDurationShort(gapMs))} gap</span>` : '';
+    if (!m) return `<span class="cache-chips">${gap}<span class="cache-chip neutral">${mod}</span></span>`;
+    return `<span class="cache-chips">${gap}<span class="cache-chip ${m.cls}" title="${m.sub}"><span class="cache-chip-dot"></span>${m.label}</span><span class="cache-chip-sub">${m.sub}</span></span>`;
+  }
   function renderCacheLifespanStrip() {
     if (!currentTelemetry || !cacheLifespanStrip) return;
     const cl = currentTelemetry.cacheLifespan;
@@ -1129,7 +1144,7 @@
     return `<div class="item-ledger">${rows.map(r => `
       <div class="item-ledger-row">
         <span class="item-ledger-key"><span class="item-ledger-dot ${r.dot}"></span>${escapeHtml(r.label)}</span>
-        <span class="item-ledger-val ${r.valClass || ''}">${escapeHtml(r.value)}</span>
+        <span class="item-ledger-val ${r.valClass || ''}">${r.html ? r.value : escapeHtml(r.value)}</span>
       </div>
     `).join('')}</div>`;
   }
@@ -1167,7 +1182,7 @@
         { dot: 'dot-cache', label: 'Cache Read', value: formatNum(p.cacheRead), valClass: 'val-cache' },
         { dot: 'dot-think', label: 'Thinking', value: formatNum(p.thinking), valClass: 'val-think' },
         { dot: 'dot-output', label: 'Output', value: formatNum(p.output) },
-        { dot: cacheDot, label: 'Cache', value: cacheLine },
+        { dot: cacheDot, label: 'Cache', value: renderCacheStatusChips(p.gapSincePrevPromptMs, p.promptCacheStatus, p.cachedModelShort || p.modelsUsedShort?.[0], p.prevPromptModelShort), html: true },
         { dot: 'dot-total', label: 'Ending Context', value: `${formatCompactNum(p.endingContext)} (${p.endingContextPct}%)`, valClass: 'val-strong' }
       ]);
 
@@ -1255,7 +1270,7 @@
         { dot: 'dot-cache', label: 'Cache Read', value: formatNum(t.cacheReadTokens), valClass: 'val-cache' },
         { dot: 'dot-think', label: 'Thinking', value: formatNum(t.thinkingTokens), valClass: 'val-think' },
         { dot: 'dot-output', label: 'Output', value: formatNum(t.outputTokens) },
-        { dot: stepCacheDot, label: 'Cache', value: stepCacheLine },
+        { dot: stepCacheDot, label: 'Cache', value: renderCacheStatusChips(t.gapSincePrevTurnMs, t.cacheStatus, modelLabel, t.prevModelShortName), html: true },
         { dot: 'dot-total', label: 'Total Turn', value: formatNum(t.totalTurnTokens), valClass: 'val-strong' }
       ]);
 

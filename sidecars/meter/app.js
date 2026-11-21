@@ -1107,8 +1107,9 @@
       if (telemetryStepPage > totalPages) telemetryStepPage = totalPages;
       if (telemetryStepPage < 1) telemetryStepPage = 1;
 
-      const pagedItems = filtered.slice((telemetryStepPage - 1) * TELEMETRY_PAGE_SIZE, telemetryStepPage * TELEMETRY_PAGE_SIZE);
-      renderStepList(pagedItems);
+      const pageStartIdx = (telemetryStepPage - 1) * TELEMETRY_PAGE_SIZE;
+      const pagedItems = filtered.slice(pageStartIdx, telemetryStepPage * TELEMETRY_PAGE_SIZE);
+      renderStepList(pagedItems, filtered, pageStartIdx);
       renderTelemetryPagination(filtered.length, telemetryStepPage, (newPage) => {
         telemetryStepPage = newPage;
         renderTelemetryList();
@@ -1190,7 +1191,7 @@
     }).join('');
   }
 
-  function renderStepList(turns) {
+  function renderStepList(turns, fullList = turns, offset = 0) {
     if (!turns || turns.length === 0) {
       telemetryList.innerHTML = `<div class="empty-state font-mono">No step records yet</div>`;
       return;
@@ -1205,18 +1206,29 @@
       const isCompact = isItemCompact(key);
       const showAnyField = telemetryFields.chat || telemetryFields.model || telemetryFields.cache;
 
-      // Grouping bracket logic: check adjacent turns in the list (turns is reverse-chronological)
+      // Grouping bracket logic: check against full list to correctly handle page boundaries
       const curPrompt = t.promptNumber;
-      const prevInList = i > 0 ? turns[i - 1] : null; // higher turnNumber
-      const nextInList = i < turns.length - 1 ? turns[i + 1] : null; // lower turnNumber
+      const globalIdx = offset + i;
+      const globalPrev = globalIdx > 0 ? fullList[globalIdx - 1] : null; // higher turnNumber (newer)
+      const globalNext = globalIdx < fullList.length - 1 ? fullList[globalIdx + 1] : null; // lower turnNumber (older)
 
-      const hasPrevSame = curPrompt != null && prevInList && prevInList.promptNumber === curPrompt;
-      const hasNextSame = curPrompt != null && nextInList && nextInList.promptNumber === curPrompt;
+      const hasPrevSame = curPrompt != null && globalPrev && globalPrev.promptNumber === curPrompt;
+      const hasNextSame = curPrompt != null && globalNext && globalNext.promptNumber === curPrompt;
+
+      // Check whether this item is at the visible page boundary continuing to another page
+      const localPrev = i > 0 ? turns[i - 1] : null;
+      const localNext = i < turns.length - 1 ? turns[i + 1] : null;
+      const continuesPrev = hasPrevSame && !localPrev; // continues from previous page
+      const continuesNext = hasNextSame && !localNext; // continues to next page
+
+      let extraContinuity = '';
+      if (continuesPrev) extraContinuity += ' (continues from previous page)';
+      if (continuesNext) extraContinuity += ' (continues on next page)';
 
       const promptPreview = t.userPromptPreview ||
         (currentTelemetry?.prompts?.find(p => p.promptNumber === curPrompt)?.userPromptPreview) || '';
       const promptTitle = curPrompt != null
-        ? `Prompt #${curPrompt}${promptPreview ? `: "${promptPreview}"` : ''}`
+        ? `Prompt #${curPrompt}${promptPreview ? `: "${promptPreview}"` : ''}${extraContinuity}`
         : '';
       const promptDataAttr = curPrompt != null ? ` data-prompt="${curPrompt}"` : '';
 
@@ -1230,6 +1242,8 @@
         } else if (hasPrevSame && !hasNextSame) {
           posClass = 'group-pos-first'; // bottom turn in prompt group
         }
+        if (continuesPrev) posClass += ' continues-prev';
+        if (continuesNext) posClass += ' continues-next';
         groupClass += ` ${posClass}`;
         bracketHtml = `<span class="step-group-bracket" title="${escapeHtml(promptTitle)}" aria-label="${escapeHtml(promptTitle)}"></span>`;
       }

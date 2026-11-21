@@ -636,12 +636,12 @@
     const isOff = !compactAlarmK || compactAlarmK <= 0;
     const isTriggered = !isOff && actK >= compactAlarmK;
     const cleanK = Number.isInteger(compactAlarmK) ? String(compactAlarmK) : compactAlarmK.toFixed(1);
-    const label = isOff ? 'Set K' : (isTriggered ? `Compact ≥${cleanK}K` : `@${cleanK}K`);
+    const label = '_>';
     const title = isOff
-      ? 'Context compact alarm is Off (click to enter a custom K threshold)'
+      ? 'Compact alarm: Off (click to set K)'
       : (isTriggered
-          ? `Context (${formatThousandsK(actTok)}) reached your ${cleanK}K compact threshold — consider running /compact (click to edit K)`
-          : `Subtle compact alarm set at ${cleanK}K tokens (click to edit K)`);
+          ? `Compact alarm reached: ${cleanK}K (click to set K)`
+          : `Compact alarm: ${cleanK}K (click to set K)`);
 
     [windowCompactAlarmBtn, hudCompactAlarmBtn].forEach((btn) => {
       if (!btn) return;
@@ -1000,9 +1000,7 @@
         : `Running model: ${runningModelName}`;
     }
     if (hudModelMeta) {
-      const turnTag = latest.turnNumber ? `Turn #${latest.turnNumber}` : `${cum.totalTurns || 0} turns`;
-      const compactTag = ctx.compactionCount > 0 ? ` · Compacted ${ctx.compactionCount}×` : '';
-      hudModelMeta.textContent = `${turnTag}${compactTag}`;
+      hudModelMeta.textContent = latest.turnNumber ? `Turn #${latest.turnNumber}` : `${cum.totalTurns || 0} turns`;
     }
 
     // 2. Cache Hit Rate Card (latest + warm min · avg + sparkline without compaction cliffs)

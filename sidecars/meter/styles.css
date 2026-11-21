@@ -1272,6 +1272,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border-bottom-left-radius: 4px;
 }
 
+/* Softer internal divider between consecutive steps within the same prompt group */
+.telemetry-item.step-item.group-pos-last,
+.telemetry-item.step-item.group-pos-middle {
+  border-bottom-color: color-mix(in srgb, var(--cx-border) 35%, transparent);
+}
+
 .item-cache-badge {
   flex-shrink: 0;
   padding: 1px 6px;

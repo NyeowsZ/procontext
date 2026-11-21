@@ -1376,3 +1376,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   font-family: var(--cx-mono); line-height: 14px;
 }
 .cache-chip-sub { font-size: 10px; color: var(--cx-fg-muted); opacity: 0.8; }
+
+/* Active turn cache meta rows */
+.cache-lifespan-strip { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px; }
+.cache-meta-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.cache-meta-label { color: var(--cx-fg-muted); }
+.cache-meta-val { color: var(--cx-fg); font-weight: 500; white-space: nowrap; }

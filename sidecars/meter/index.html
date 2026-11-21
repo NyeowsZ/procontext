@@ -18,8 +18,8 @@
         <div class="header-sub font-mono" id="cascadeIdBadge" title="Active conversation ID">...</div>
       </div>
       <div class="header-actions">
-        <button class="pill-btn view-mode-pill font-mono" id="viewModeQuickBtn" title="Cycle View Mode (Full → Simple → Coding HUD)">
-          Full
+        <button class="pill-btn view-mode-pill active-mode font-mono" id="viewModeQuickBtn" title="Cycle View Mode (Coding HUD → Full → Simple)">
+          HUD
         </button>
         <button class="pill-btn" id="copyMarkdownBtn" title="Copy /context prompt summary">
           /context
@@ -39,17 +39,17 @@
           </button>
           <div class="popover-menu" id="headerMenu" role="menu" aria-label="Main settings">
             <div class="popover-title">View Mode</div>
-            <label class="popover-item" title="Full telemetry breakdown with all sections and pagination">
-              <input type="radio" name="viewMode" value="full" data-view-mode="full" checked>
-              <span>Full</span>
+            <label class="popover-item" title="Compact 2×2 sparkline KPI cards + 4-cell stat strip for coding">
+              <input type="radio" name="viewMode" value="hud" data-view-mode="hud" checked>
+              <span>Coding HUD</span>
             </label>
             <label class="popover-item" title="Essential metrics and latest 5 compact telemetry items">
               <input type="radio" name="viewMode" value="simple" data-view-mode="simple">
               <span>Simple</span>
             </label>
-            <label class="popover-item" title="Compact 2×2 sparkline KPI cards + 4-cell stat strip for coding">
-              <input type="radio" name="viewMode" value="hud" data-view-mode="hud">
-              <span>Coding HUD</span>
+            <label class="popover-item" title="Full telemetry breakdown with all sections and pagination">
+              <input type="radio" name="viewMode" value="full" data-view-mode="full">
+              <span>Full</span>
             </label>
             <div class="hairline-divider"></div>
             <div class="popover-title">Sections</div>
@@ -60,13 +60,13 @@
             <label class="popover-item"><input type="checkbox" data-section-toggle="sessionTotals" checked><span>Session Total</span></label>
             <label class="popover-item"><input type="checkbox" data-section-toggle="telemetry" checked><span>Telemetry</span></label>
             <div class="hairline-divider"></div>
-            <div class="popover-title">Compact Alarm</div>
+            <div class="popover-title">Compact Alarm (K)</div>
             <div class="popover-alarm-row font-mono" id="compactAlarmMenuRow">
-              <button type="button" class="alarm-opt-btn" data-alarm-pct="0">Off</button>
-              <button type="button" class="alarm-opt-btn" data-alarm-pct="30">30%</button>
-              <button type="button" class="alarm-opt-btn" data-alarm-pct="50">50%</button>
-              <button type="button" class="alarm-opt-btn" data-alarm-pct="65">65%</button>
-              <button type="button" class="alarm-opt-btn" data-alarm-pct="80">80%</button>
+              <div class="alarm-k-input-wrap">
+                <input type="number" class="alarm-k-input font-mono" id="compactAlarmKInput" min="0" max="2000" step="10" placeholder="250" title="Set context compact alarm threshold in thousands of tokens (0 = Off)">
+                <span class="alarm-k-unit">K</span>
+              </div>
+              <button type="button" class="alarm-opt-btn" id="compactAlarmOffBtn" title="Disable compact alarm">Off</button>
             </div>
           </div>
         </div>
@@ -102,7 +102,16 @@
         </div>
 
         <!-- Coding HUD Display Mode (2×2 Primary KPI Sparkline Grid + 4-Cell Secondary Strip) -->
-        <div id="codingHudPane" class="coding-hud-pane hidden">
+        <div id="codingHudPane" class="coding-hud-pane">
+          <!-- Subtle Running Model Line -->
+          <div class="hud-model-strip font-mono" id="hudModelStrip">
+            <span class="hud-model-left">
+              <span class="hud-model-dot" id="hudModelDot"></span>
+              <span class="hud-model-name" id="hudModelName">Loading model…</span>
+            </span>
+            <span class="hud-model-right" id="hudModelMeta"></span>
+          </div>
+
           <div class="hud-primary-grid">
             <!-- 1. Cache TTL Countdown -->
             <div class="hud-kpi-card" id="hudTtlCard">
@@ -148,12 +157,15 @@
                   </svg>
                   <span>Context window</span>
                 </div>
-                <button type="button" class="compact-alarm-tag font-mono" id="hudCompactAlarmBtn" title="Context compact alarm threshold (click to cycle)">@50%</button>
+                <span class="compact-alarm-anchor" id="hudCompactAlarmWrap">
+                  <button type="button" class="compact-alarm-tag font-mono" id="hudCompactAlarmBtn" title="Context compact alarm threshold in K (click to edit)">@250K</button>
+                  <input type="number" class="compact-alarm-inline-input font-mono hidden" id="hudCompactAlarmInlineInput" min="0" max="2000" step="10" placeholder="K" aria-label="Compact alarm threshold in K">
+                </span>
               </div>
-              <div class="hud-kpi-value font-mono" id="hudContextValue">0.0%</div>
+              <div class="hud-kpi-value font-mono" id="hudContextValue">0K</div>
               <div class="hud-kpi-sub font-mono">
                 <span class="hud-delta-pill" id="hudContextDelta">Optimal</span>
-                <span class="hud-sub-text" id="hudContextMeta">0 free</span>
+                <span class="hud-sub-text" id="hudContextMeta">of 1M · 1M free</span>
               </div>
               <div class="hud-spark-wrap" id="hudContextSpark"></div>
             </div>
@@ -207,7 +219,10 @@
             <div class="hero-left">
               <span class="hero-percent" id="contextPctValue">0.0% used</span>
               <span class="health-status-text" id="healthBadge">Optimal</span>
-              <button type="button" class="compact-alarm-tag font-mono" id="windowCompactAlarmBtn" title="Context compact alarm threshold (click to cycle)">@50%</button>
+              <span class="compact-alarm-anchor" id="windowCompactAlarmWrap">
+                <button type="button" class="compact-alarm-tag font-mono" id="windowCompactAlarmBtn" title="Context compact alarm threshold in K (click to edit)">@250K</button>
+                <input type="number" class="compact-alarm-inline-input font-mono hidden" id="windowCompactAlarmInlineInput" min="0" max="2000" step="10" placeholder="K" aria-label="Compact alarm threshold in K">
+              </span>
             </div>
             <span class="hero-ratio" id="windowRatioVal" title="Active / Max Context Tokens">0 / 1M</span>
           </div>

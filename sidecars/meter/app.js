@@ -50,13 +50,12 @@
   const expandedQuotaModelNames = new Set();
 
   // Telemetry item compaction: default mode + per-item overrides
-  let viewMode = localStorage.getItem('token_meter_view_mode') || (localStorage.getItem('token_meter_simple_mode') === 'true' ? 'simple' : 'full');
-  if (!['full', 'simple', 'hud'].includes(viewMode)) viewMode = 'full';
-  let simpleMode = viewMode === 'simple';
+  // Default to Coding HUD ('hud') whenever the plugin is opened
+  let viewMode = 'hud';
+  let simpleMode = false;
   const SIMPLE_TELEMETRY_LIMIT = 5;
-  const COMPACT_ALARM_PRESETS = [30, 50, 65, 80, 0];
-  let compactAlarmPct = parseInt(localStorage.getItem('token_meter_compact_alarm_pct') ?? '50', 10);
-  if (!COMPACT_ALARM_PRESETS.includes(compactAlarmPct)) compactAlarmPct = 50;
+  let compactAlarmK = parseFloat(localStorage.getItem('token_meter_compact_alarm_k') ?? '250');
+  if (!isFinite(compactAlarmK) || compactAlarmK < 0) compactAlarmK = 250;
   let defaultItemsCompact = localStorage.getItem('token_meter_items_default_compact') === 'true';
   let itemCompactOverrides = new Set();
   try {
@@ -142,7 +141,11 @@
   const contextPctValue = document.getElementById('contextPctValue');
   const healthBadge = document.getElementById('healthBadge');
   const windowCompactAlarmBtn = document.getElementById('windowCompactAlarmBtn');
+  const windowCompactAlarmInlineInput = document.getElementById('windowCompactAlarmInlineInput');
   const hudCompactAlarmBtn = document.getElementById('hudCompactAlarmBtn');
+  const hudCompactAlarmInlineInput = document.getElementById('hudCompactAlarmInlineInput');
+  const compactAlarmKInput = document.getElementById('compactAlarmKInput');
+  const compactAlarmOffBtn = document.getElementById('compactAlarmOffBtn');
   const contextAlarmTick = document.getElementById('contextAlarmTick');
   const windowRatioVal = document.getElementById('windowRatioVal');
   const contextProgressBar = document.getElementById('contextProgressBar');
@@ -452,7 +455,7 @@
 
     contextProgressBar.style.width = `${pct}%`;
     contextProgressBar.style.backgroundColor = color;
-    updateCompactAlarmUi(pct);
+    updateCompactAlarmUi(activeTok, maxLim);
 
     if (activeTokensVal) activeTokensVal.textContent = `${formatNum(activeTok)} active`;
     remainingTokensVal.textContent = `${formatCompactNum(remTok)} free`;
@@ -598,6 +601,19 @@
     return Math.round(val).toLocaleString();
   }
 
+  // Always format in thousands (K) for the Context Window HUD card (e.g. 168.5K, 1,048.6K)
+  function formatThousandsK(tokens, signed = false) {
+    const val = Number(tokens) || 0;
+    const sign = signed && val > 0 ? '+' : (val < 0 ? '-' : '');
+    const k = Math.abs(val) / 1_000;
+    if (k === 0) return '0K';
+    if (k >= 1000) {
+      return `${sign}${Math.round(k).toLocaleString()}K`;
+    }
+    const str = k >= 10 ? k.toFixed(1).replace(/\.0$/, '') : k.toFixed(1);
+    return `${sign}${str}K`;
+  }
+
   function formatTtlBoundShort(ms) {
     if (ms == null || ms < 0) return '—';
     const sec = Math.round(ms / 1000);
@@ -609,18 +625,23 @@
     return remSec > 0 ? `${mins}m ${remSec}s` : `${mins}m`;
   }
 
-  function updateCompactAlarmUi(currentPct = null) {
-    const pct = currentPct != null
-      ? currentPct
-      : (currentTelemetry?.liveContext?.consumptionPct || 0);
-    const isOff = !compactAlarmPct || compactAlarmPct <= 0;
-    const isTriggered = !isOff && pct >= compactAlarmPct;
-    const label = isOff ? 'Alarm off' : (isTriggered ? `Compact ≥${compactAlarmPct}%` : `@${compactAlarmPct}%`);
+  function updateCompactAlarmUi(activeTokens = null, maxLimitTokens = null) {
+    const actTok = activeTokens != null
+      ? activeTokens
+      : (currentTelemetry?.liveContext?.activeTokens || 0);
+    const maxTok = maxLimitTokens != null
+      ? maxLimitTokens
+      : (currentTelemetry?.liveContext?.maxLimit || 1048576);
+    const actK = actTok / 1000;
+    const isOff = !compactAlarmK || compactAlarmK <= 0;
+    const isTriggered = !isOff && actK >= compactAlarmK;
+    const cleanK = Number.isInteger(compactAlarmK) ? String(compactAlarmK) : compactAlarmK.toFixed(1);
+    const label = isOff ? 'Set K' : (isTriggered ? `Compact ≥${cleanK}K` : `@${cleanK}K`);
     const title = isOff
-      ? 'Context compact alarm is Off (click to set threshold)'
+      ? 'Context compact alarm is Off (click to enter a custom K threshold)'
       : (isTriggered
-          ? `Context (${pct.toFixed(1)}%) reached your ${compactAlarmPct}% compact threshold — consider running /compact (click to cycle)`
-          : `Subtle compact alarm set at ${compactAlarmPct}% context usage (click to cycle)`);
+          ? `Context (${formatThousandsK(actTok)}) reached your ${cleanK}K compact threshold — consider running /compact (click to edit K)`
+          : `Subtle compact alarm set at ${cleanK}K tokens (click to edit K)`);
 
     [windowCompactAlarmBtn, hudCompactAlarmBtn].forEach((btn) => {
       if (!btn) return;
@@ -631,36 +652,68 @@
     });
 
     if (contextAlarmTick) {
-      if (isOff) {
+      const tickPct = (!isOff && maxTok > 0) ? Math.min(100, Math.max(0, ((compactAlarmK * 1000) / maxTok) * 100)) : 0;
+      if (isOff || tickPct <= 0 || tickPct >= 100) {
         contextAlarmTick.style.display = 'none';
       } else {
         contextAlarmTick.style.display = '';
-        contextAlarmTick.style.left = `${compactAlarmPct}%`;
+        contextAlarmTick.style.left = `${tickPct.toFixed(1)}%`;
         contextAlarmTick.classList.toggle('triggered', isTriggered);
-        contextAlarmTick.title = `Compact alarm threshold: ${compactAlarmPct}%`;
+        contextAlarmTick.title = `Compact alarm threshold: ${cleanK}K tokens`;
       }
     }
 
-    document.querySelectorAll('[data-alarm-pct]').forEach((btn) => {
-      const v = parseInt(btn.dataset.alarmPct, 10);
-      btn.classList.toggle('active', v === compactAlarmPct);
-    });
+    if (compactAlarmKInput && document.activeElement !== compactAlarmKInput) {
+      compactAlarmKInput.value = isOff ? '' : String(compactAlarmK);
+    }
+    if (compactAlarmOffBtn) {
+      compactAlarmOffBtn.classList.toggle('active', isOff);
+    }
   }
 
-  function setCompactAlarmPct(nextVal) {
-    compactAlarmPct = COMPACT_ALARM_PRESETS.includes(nextVal) ? nextVal : 50;
+  function setCompactAlarmK(nextValK) {
+    const parsed = parseFloat(nextValK);
+    compactAlarmK = (isFinite(parsed) && parsed > 0) ? Math.min(10000, Math.round(parsed * 10) / 10) : 0;
     try {
-      localStorage.setItem('token_meter_compact_alarm_pct', String(compactAlarmPct));
+      localStorage.setItem('token_meter_compact_alarm_k', String(compactAlarmK));
     } catch {}
     updateCompactAlarmUi();
     if (currentTelemetry) renderCodingHud();
   }
 
-  function cycleCompactAlarmPct(e) {
+  function openInlineAlarmEditor(btnEl, inputEl, e) {
     if (e) e.stopPropagation();
-    const idx = COMPACT_ALARM_PRESETS.indexOf(compactAlarmPct);
-    const next = COMPACT_ALARM_PRESETS[(idx + 1) % COMPACT_ALARM_PRESETS.length];
-    setCompactAlarmPct(next);
+    if (!btnEl || !inputEl) return;
+    btnEl.classList.add('hidden');
+    inputEl.classList.remove('hidden');
+    inputEl.value = compactAlarmK > 0 ? String(compactAlarmK) : '';
+    inputEl.focus();
+    inputEl.select();
+  }
+
+  function bindInlineAlarmInput(btnEl, inputEl) {
+    if (!btnEl || !inputEl) return;
+    btnEl.addEventListener('click', (e) => openInlineAlarmEditor(btnEl, inputEl, e));
+    const commit = () => {
+      if (inputEl.classList.contains('hidden')) return;
+      const raw = inputEl.value.trim();
+      setCompactAlarmK(raw === '' ? 0 : parseFloat(raw));
+      inputEl.classList.add('hidden');
+      btnEl.classList.remove('hidden');
+    };
+    inputEl.addEventListener('click', (e) => e.stopPropagation());
+    inputEl.addEventListener('blur', commit);
+    inputEl.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        inputEl.classList.add('hidden');
+        btnEl.classList.remove('hidden');
+      }
+    });
   }
 
   function buildAreaSparklineSvg(values, colorVar, uid, minVal = null, maxVal = null, alarmThresholdVal = null) {
@@ -932,6 +985,26 @@
       : (data.cumulative || {});
     const model = filteredModel || data.activeModel || {};
 
+    // 0. Subtle Running Model Line at the top of Coding HUD
+    const hudModelDot = document.getElementById('hudModelDot');
+    const hudModelName = document.getElementById('hudModelName');
+    const hudModelMeta = document.getElementById('hudModelMeta');
+    const runningModelName = filteredModel?.displayName || latest.modelDisplayName || model.displayName || 'Default Model';
+    if (hudModelDot) {
+      hudModelDot.className = `hud-model-dot brand-${brandOf(runningModelName)}`;
+    }
+    if (hudModelName) {
+      hudModelName.textContent = runningModelName;
+      hudModelName.title = (!filteredModel && data.isMultiModel && data.sessionModels?.length > 1)
+        ? `Running model: ${runningModelName}\nSession models (${data.sessionModels.length}): ${data.sessionModels.join(', ')}`
+        : `Running model: ${runningModelName}`;
+    }
+    if (hudModelMeta) {
+      const turnTag = latest.turnNumber ? `Turn #${latest.turnNumber}` : `${cum.totalTurns || 0} turns`;
+      const compactTag = ctx.compactionCount > 0 ? ` · Compacted ${ctx.compactionCount}×` : '';
+      hudModelMeta.textContent = `${turnTag}${compactTag}`;
+    }
+
     // 2. Cache Hit Rate Card (latest + warm min · avg + sparkline without compaction cliffs)
     const hudCacheValue = document.getElementById('hudCacheValue');
     const hudCacheDelta = document.getElementById('hudCacheDelta');
@@ -972,7 +1045,7 @@
       hudCacheSpark.innerHTML = buildAreaSparklineSvg(sparkSeries, 'var(--tm-cache)', 'hudCacheGrad', loBound, 100);
     }
 
-    // 3. Context Window Card (% used + used / max · free + sparkline + subtle compact alarm)
+    // 3. Context Window Card (displayed in thousands K + manual K compact alarm)
     const hudContextValue = document.getElementById('hudContextValue');
     const hudContextDelta = document.getElementById('hudContextDelta');
     const hudContextMeta = document.getElementById('hudContextMeta');
@@ -982,37 +1055,40 @@
     const maxLim = model.maxContextTokens || ctx.maxLimit || 1048576;
     const ctxPct = Math.min(100, Math.max(0, maxLim > 0 ? (activeTok / maxLim) * 100 : 0));
     const remTok = Math.max(0, maxLim - activeTok);
-    const ctxSeries = relevantTurns.map(t => maxLim > 0 ? ((t.totalTurnTokens || 0) / maxLim) * 100 : 0);
-    const prevCtxPct = ctxSeries.length > 1 ? ctxSeries[ctxSeries.length - 2] : ctxPct;
-    const ctxDiff = ctxPct - prevCtxPct;
-    const alarmTriggered = compactAlarmPct > 0 && ctxPct >= compactAlarmPct;
+    const activeK = activeTok / 1000;
+    const ctxSeriesK = relevantTurns.map(t => (t.totalTurnTokens || 0) / 1000);
+    const prevK = ctxSeriesK.length > 1 ? ctxSeriesK[ctxSeriesK.length - 2] : activeK;
+    const diffTok = activeTok - (prevK * 1000);
+    const alarmTriggered = compactAlarmK > 0 && activeK >= compactAlarmK;
     const ctxColor = ctxPct >= 80 ? 'var(--tm-crit)' : ((ctxPct >= 50 || alarmTriggered) ? 'var(--tm-warn)' : 'var(--cx-primary)');
 
-    updateCompactAlarmUi(ctxPct);
+    updateCompactAlarmUi(activeTok, maxLim);
 
-    if (hudContextValue) hudContextValue.textContent = `${ctxPct.toFixed(1)}%`;
+    if (hudContextValue) {
+      hudContextValue.textContent = formatThousandsK(activeTok);
+      hudContextValue.title = `${formatNum(activeTok)} / ${formatNum(maxLim)} tokens (${ctxPct.toFixed(1)}% used)`;
+    }
     if (hudContextDelta) {
-      if (ctxSeries.length > 1 && Math.abs(ctxDiff) >= 0.05) {
-        const up = ctxDiff >= 0;
-        hudContextDelta.textContent = `${up ? '↑' : '↓'} ${Math.abs(ctxDiff).toFixed(1)}%`;
-        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : ((ctxPct >= 50 || alarmTriggered) ? 'warn' : 'neutral')}`;
+      if (ctxSeriesK.length > 1 && Math.abs(diffTok) >= 100) {
+        hudContextDelta.textContent = formatThousandsK(diffTok, true);
+        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : ((ctxPct >= 50 || alarmTriggered) ? 'warn' : (diffTok < 0 ? 'up' : 'neutral'))}`;
       } else {
-        hudContextDelta.textContent = ctxPct >= 80 ? 'Critical' : (ctxPct >= 50 ? 'Moderate' : 'Optimal');
-        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : (ctxPct >= 50 ? 'warn' : 'up')}`;
+        hudContextDelta.textContent = alarmTriggered ? 'Compact' : (ctxPct >= 80 ? 'Critical' : (ctxPct >= 50 ? 'Moderate' : 'Optimal'));
+        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : ((ctxPct >= 50 || alarmTriggered) ? 'warn' : 'up')}`;
       }
     }
     if (hudContextMeta) {
-      hudContextMeta.textContent = `${formatCompactClean(activeTok)} / ${formatCompactClean(maxLim)} · ${formatCompactClean(remTok)} free`;
+      hudContextMeta.textContent = `of ${formatCompactClean(maxLim)} · ${formatCompactClean(remTok)} free`;
     }
     if (hudContextSpark) {
-      const ceil = Math.max(25, compactAlarmPct > 0 ? compactAlarmPct * 1.15 : 25, ...ctxSeries, ctxPct);
+      const ceilK = Math.max(100, compactAlarmK > 0 ? compactAlarmK * 1.15 : 100, ...ctxSeriesK, activeK);
       hudContextSpark.innerHTML = buildAreaSparklineSvg(
-        ctxSeries.slice(-18),
+        ctxSeriesK.slice(-18),
         ctxColor,
         'hudCtxGrad',
         0,
-        ceil,
-        compactAlarmPct > 0 ? compactAlarmPct : null
+        ceilK,
+        compactAlarmK > 0 ? compactAlarmK : null
       );
     }
 
@@ -2583,18 +2659,29 @@
     });
   }
 
-  if (windowCompactAlarmBtn) {
-    windowCompactAlarmBtn.addEventListener('click', cycleCompactAlarmPct);
-  }
-  if (hudCompactAlarmBtn) {
-    hudCompactAlarmBtn.addEventListener('click', cycleCompactAlarmPct);
-  }
-  document.querySelectorAll('[data-alarm-pct]').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      setCompactAlarmPct(parseInt(btn.dataset.alarmPct, 10));
+  bindInlineAlarmInput(windowCompactAlarmBtn, windowCompactAlarmInlineInput);
+  bindInlineAlarmInput(hudCompactAlarmBtn, hudCompactAlarmInlineInput);
+
+  if (compactAlarmKInput) {
+    const applyMenuK = () => {
+      const raw = compactAlarmKInput.value.trim();
+      setCompactAlarmK(raw === '' ? 0 : parseFloat(raw));
+    };
+    compactAlarmKInput.addEventListener('change', applyMenuK);
+    compactAlarmKInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyMenuK();
+        compactAlarmKInput.blur();
+      }
     });
-  });
+  }
+  if (compactAlarmOffBtn) {
+    compactAlarmOffBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setCompactAlarmK(0);
+    });
+  }
   updateCompactAlarmUi();
 
   document.querySelectorAll('[data-section-toggle]').forEach((cb) => {

@@ -1791,13 +1791,58 @@ body.simple-mode #telemetryMenuBtn {
   text-overflow: ellipsis;
 }
 
-/* Subtle Context Compact Alarm tag & menu selector */
+/* Subtle Running Model Strip in Coding HUD */
+.hud-model-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--cx-fg-muted);
+}
+.hud-model-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.hud-model-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand, var(--cx-primary));
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+.hud-model-name {
+  color: var(--cx-fg-2);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud-model-right {
+  font-size: 10.5px;
+  color: var(--cx-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+/* Subtle Context Compact Alarm tag & manual K input */
 .hud-kpi-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
   min-width: 0;
+}
+.compact-alarm-anchor {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 .compact-alarm-tag {
   display: inline-flex;
@@ -1815,6 +1860,9 @@ body.simple-mode #telemetryMenuBtn {
   flex-shrink: 0;
   transition: opacity 140ms var(--ease-out), color 140ms var(--ease-out), background-color 140ms var(--ease-out), border-color 140ms var(--ease-out);
 }
+.compact-alarm-tag.hidden {
+  display: none;
+}
 .compact-alarm-tag:hover {
   opacity: 1;
   background: var(--cx-fill);
@@ -1830,15 +1878,59 @@ body.simple-mode #telemetryMenuBtn {
   border-color: color-mix(in srgb, var(--tm-warn) 28%, transparent);
   font-weight: 600;
 }
+.compact-alarm-inline-input {
+  width: 48px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--cx-primary);
+  background: var(--cx-surface);
+  color: var(--cx-fg);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+.compact-alarm-inline-input.hidden {
+  display: none;
+}
 .popover-alarm-row {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 5px;
   padding: 2px 6px 4px;
 }
-.alarm-opt-btn {
+.alarm-k-input-wrap {
+  display: flex;
+  align-items: center;
   flex: 1;
-  padding: 3px 4px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--cx-border);
+  background: var(--cx-fill);
+}
+.alarm-k-input-wrap:focus-within {
+  border-color: var(--cx-primary);
+}
+.alarm-k-input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--cx-fg);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+.alarm-k-unit {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--cx-fg-muted);
+  margin-left: 2px;
+}
+.alarm-opt-btn {
+  padding: 3px 8px;
+  height: 24px;
   border-radius: 4px;
   border: 1px solid var(--cx-border);
   background: var(--cx-fill);

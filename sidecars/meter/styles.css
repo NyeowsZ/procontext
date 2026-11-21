@@ -1449,3 +1449,5 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .quota-pool-fill.warn { background: var(--tm-warn); }
 .quota-pool-fill.crit { background: var(--tm-crit); }
 .quota-pool-sub span:last-child { font-variant-numeric: tabular-nums; }
+/* Telemetry quota cost rows */
+.item-ledger-val.val-quota { color: var(--tm-warn); font-variant-numeric: tabular-nums; }

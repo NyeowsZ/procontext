@@ -70,7 +70,7 @@
   // Persisted UI preferences: visible sections, compacted sections, telemetry fields
   const DEFAULT_SECTIONS = { windowUtil: true, quotas: true, activeTurn: true, genOutput: true, sessionTotals: true, telemetry: true };
   const DEFAULT_SECTION_COMPACT = { windowUtil: false, quotas: false, activeTurn: false, genOutput: false, sessionTotals: false, telemetry: false };
-  const DEFAULT_TELEMETRY_FIELDS = { model: true, chat: true, calls: true, cache: true };
+  const DEFAULT_TELEMETRY_FIELDS = { model: true, chat: true, calls: true, cache: true, quota5h: true, quotaWeekly: true };
 
   function loadJsonPref(key, defaults) {
     try {
@@ -1159,6 +1159,55 @@
     return { label: `${first}–${last}`, title: `Steps ${stepIndices.join(', ')}` };
   }
 
+  // ---------- Quota cost (% of 5h / weekly pool) ----------
+  // Estimated from the pool's learned tokens-per-1% rate (global quota correlation).
+  function findQuotaPool(modelName, windowType) {
+    const pools = globalUsageData?.quotaPools || [];
+    return pools.find(p => p.windowType === windowType && (p.models || []).includes(modelName)) || null;
+  }
+
+  // entries: [{ model, tokens }]. Returns { pct, state } or null when the models are not in this window's pool.
+  function computeQuotaCost(entries, windowType) {
+    let pct = 0;
+    let matched = false;
+    let ready = true;
+    for (const e of entries) {
+      const pool = findQuotaPool(e.model, windowType);
+      if (!pool) continue;
+      matched = true;
+      const per1 = pool.correlation?.hasData ? pool.correlation.per1Pct?.totalProcessedTokens : 0;
+      if (!per1) { ready = false; continue; }
+      pct += e.tokens / per1;
+    }
+    if (!matched) return null;
+    return { pct, ready };
+  }
+
+  function formatQuotaCost(cost) {
+    if (!cost) return null;
+    if (!cost.ready && cost.pct === 0) return 'learning…';
+    const v = cost.pct;
+    const txt = v >= 10 ? v.toFixed(1) : (v >= 0.01 ? v.toFixed(2) : (v > 0 ? '<0.01' : '0'));
+    return `~${txt}%${cost.ready ? '' : ' (partial)'}`;
+  }
+
+  function turnQuotaEntry(t) {
+    return { model: t.modelDisplayName, tokens: (t.inputTokens || 0) + (t.cacheReadTokens || 0) + (t.outputTokens || 0) };
+  }
+
+  function quotaCostRows(entries) {
+    const rows = [];
+    if (telemetryFields.quota5h) {
+      const v = formatQuotaCost(computeQuotaCost(entries, '5h'));
+      if (v) rows.push({ dot: 'dot-total', label: '5h Quota', value: v, valClass: 'val-quota' });
+    }
+    if (telemetryFields.quotaWeekly) {
+      const v = formatQuotaCost(computeQuotaCost(entries, 'weekly'));
+      if (v) rows.push({ dot: 'dot-total', label: 'Weekly Quota', value: v, valClass: 'val-quota' });
+    }
+    return rows;
+  }
+
   function renderLedgerRows(rows) {
     return `<div class="item-ledger">${rows.map(r => `
       <div class="item-ledger-row">
@@ -1201,6 +1250,7 @@
         { dot: 'dot-cache', label: 'Cache Read', value: formatNum(p.cacheRead), valClass: 'val-cache' },
         { dot: 'dot-think', label: 'Thinking', value: formatNum(p.thinking), valClass: 'val-think' },
         { dot: 'dot-output', label: 'Output', value: formatNum(p.output) },
+        ...quotaCostRows((currentTelemetry?.turns || []).filter(x => x.promptNumber === p.promptNumber).map(turnQuotaEntry)),
         { dot: cacheDot, label: 'Cache', value: renderCacheStatusChips(p.gapSincePrevPromptMs, p.promptCacheStatus, p.cachedModelShort || p.modelsUsedShort?.[0], p.prevPromptModelShort), html: true },
         { dot: 'dot-total', label: 'Ending Context', value: `${formatCompactNum(p.endingContext)} (${p.endingContextPct}%)`, valClass: 'val-strong' }
       ]);
@@ -1289,6 +1339,7 @@
         { dot: 'dot-cache', label: 'Cache Read', value: formatNum(t.cacheReadTokens), valClass: 'val-cache' },
         { dot: 'dot-think', label: 'Thinking', value: formatNum(t.thinkingTokens), valClass: 'val-think' },
         { dot: 'dot-output', label: 'Output', value: formatNum(t.outputTokens) },
+        ...quotaCostRows([turnQuotaEntry(t)]),
         { dot: stepCacheDot, label: 'Cache', value: renderCacheStatusChips(t.gapSincePrevTurnMs, t.cacheStatus, modelLabel, t.prevModelShortName), html: true },
         { dot: 'dot-total', label: 'Total Turn', value: formatNum(t.totalTurnTokens), valClass: 'val-strong' }
       ]);

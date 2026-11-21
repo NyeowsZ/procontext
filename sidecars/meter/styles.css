@@ -1469,3 +1469,25 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .cache-meta-row:has(.cache-lifespan-stat.warm) .sw-meta-ttl { background: var(--tm-ok); }
 .cache-meta-row:has(.cache-lifespan-stat.expiring) .sw-meta-ttl { background: var(--tm-warn); }
 .cache-meta-row:has(.cache-lifespan-stat.cold) .sw-meta-ttl { background: var(--tm-crit); }
+/* Change pills: transient +N on significant updates */
+.delta-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  vertical-align: 1px;
+  font-variant-numeric: tabular-nums;
+  color: var(--tm-ok);
+  background: color-mix(in srgb, var(--tm-ok) 14%, transparent);
+  animation: delta-pill-in 220ms var(--ease-out);
+  transition: opacity 400ms var(--ease-out), transform 400ms var(--ease-out);
+}
+.delta-pill.leaving { opacity: 0; transform: translateY(-2px); }
+@keyframes delta-pill-in {
+  from { opacity: 0; transform: translateY(3px) scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .delta-pill { animation: none; } }

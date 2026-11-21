@@ -293,6 +293,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   align-items: center;
   gap: 8px;
 }
+.section-block:not(.compact) #secSessionTotalsSummary {
+  display: none;
+}
 .compact-inline-val {
   display: none;
   font-size: 12px;

@@ -168,6 +168,9 @@
   const sessionCacheSavingsVal = document.getElementById('sessionCacheSavingsVal');
   const sessionCacheTotal = document.getElementById('sessionCacheTotal');
   const sessionCachePct = document.getElementById('sessionCachePct');
+  const sessionPromptCacheRow = document.getElementById('sessionPromptCacheRow');
+  const sessionPromptCacheRatio = document.getElementById('sessionPromptCacheRatio');
+  const sessionPromptCachePct = document.getElementById('sessionPromptCachePct');
   const sessionInputTotal = document.getElementById('sessionInputTotal');
   const sessionInputPct = document.getElementById('sessionInputPct');
   const sessionThinkingTotal = document.getElementById('sessionThinkingTotal');
@@ -490,6 +493,28 @@
 
     if (sessionCacheTotal) sessionCacheTotal.textContent = formatNum(sessCache);
     if (sessionCachePct) sessionCachePct.textContent = pctStr(sessCache, sessTotal);
+
+    // Prompt cache rate: cacheRead / (input + cacheRead)
+    const promptInputTokens = sessInput + sessCache;
+    const promptCacheRatioNum = promptInputTokens > 0 ? (sessCache / promptInputTokens) * 100 : 0;
+    const sessCachePctNum = sessTotal > 0 ? (sessCache / sessTotal) * 100 : 0;
+    const diffPct = Math.abs(promptCacheRatioNum - sessCachePctNum);
+
+    if (sessionPromptCacheRow) {
+      // If the prompt cache rate differs by at least 0.1% from the session processed cache %, show it under Cache Read
+      if (diffPct >= 0.1 && promptInputTokens > 0) {
+        sessionPromptCacheRow.classList.remove('hidden');
+        if (sessionPromptCacheRatio) {
+          sessionPromptCacheRatio.textContent = `${formatNum(sessCache)} / ${formatNum(promptInputTokens)}`;
+        }
+        if (sessionPromptCachePct) {
+          sessionPromptCachePct.textContent = `${promptCacheRatioNum.toFixed(1)}%`;
+        }
+      } else {
+        sessionPromptCacheRow.classList.add('hidden');
+      }
+    }
+
     sessionInputTotal.textContent = formatNum(sessInput);
     if (sessionInputPct) sessionInputPct.textContent = pctStr(sessInput, sessTotal);
     sessionThinkingTotal.textContent = formatNum(sessThink);

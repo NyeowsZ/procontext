@@ -200,7 +200,7 @@
         <section class="section-block compactable-section" id="secSessionTotals" data-section="sessionTotals" role="button" tabindex="0" aria-expanded="true" title="Click to compact">
           <div class="section-header-row">
             <span class="section-label">Session Totals</span>
-            <span class="section-summary-right font-mono">
+            <span class="section-summary-right font-mono" id="secSessionTotalsSummary">
               <span class="meta-strong" id="sessionProcessedVal">0</span>
               <span class="turn-count" id="totalTurnsBadge">0 turns</span>
               <span class="cache-rate" id="sessionCacheSavingsVal">0% cached</span>
@@ -214,6 +214,12 @@
                 <span class="cat-label">Cache Read</span>
                 <span class="cat-tok" id="sessionCacheTotal">0</span>
                 <span class="cat-pct" id="sessionCachePct">0%</span>
+              </div>
+              <div class="cat-row hidden" id="sessionPromptCacheRow">
+                <span class="swatch sw-cache" style="opacity: 0.7;"></span>
+                <span class="cat-label" title="Cache hit rate calculated strictly over prompt input tokens (input + cache read)">Prompt Cache Rate</span>
+                <span class="cat-tok" id="sessionPromptCacheRatio">—</span>
+                <span class="cat-pct" id="sessionPromptCachePct">0%</span>
               </div>
               <div class="cat-row">
                 <span class="swatch sw-input"></span>

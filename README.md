@@ -61,17 +61,18 @@ Streamlined vertical dashboard for quick scanning:
 
 ### 3. Full Mode (`Full`)
 Complete analytical breakdown for deep inspection:
-- **Window Utilization & Context Compaction**: Capacity bar with subtle `_>` compact threshold tick, active model & multi-model badges, and an expandable **Context Compacted** `.cat-list` drill-down showing every compaction checkpoint (`Turn #N`, `before → after`, tokens saved, and `%` reduction).
+- **Window Utilization & Context Compaction**: Capacity bar with subtle `_>` compact threshold trigger, active model & multi-model badges, and an expandable **Context Compacted** row opening an in-SPA detail breakdown of every compaction checkpoint (`Turn #N`, `before → after`, tokens saved, and `%` reduction).
 - **Account & Quotas (5-Hour & Weekly Pools)**:
-  - Groups pools by **5-Hour Window** (`Claude / GPT-OSS`, `Gemini · Hydrogen / Neon`) and **Weekly Window** (`Gemini · Argon`) with brand-colored family pills.
-  - Expand any pool to inspect **Per 1% of Quota** empirical token burn (`Cache Read / 1%`, `New Input / 1%`, `Thinking / 1%`, `Response / 1%`, `Total / 1%`), **Pool Runway** (`~N turns`, estimated remaining token budget, estimated 100% pool budget), and **Model Separation** (color-coded per-model share with expandable token breakdown and one-click `Focus` filter).
+  - Streamlined `.cat-list` rows (`Claude / GPT`, `Gemini`, `Argon`) matching the clean layout of Session Totals, showing empirical token burn rates, reset countdowns, and used percentages without noisy borders or pills.
+  - Click any pool to navigate to an in-SPA detail page inspecting **Per 1% of Quota** empirical token burn (`Cache Read / 1%`, `New Input / 1%`, `Thinking / 1%`, `Response / 1%`, `Total / 1%`), **Pool Runway** (`~N turns`, estimated remaining token budget, estimated 100% pool budget), and **Model Separation** (color-coded per-model share with expandable token breakdown and one-click `Focus` filter).
 - **Active Turn & Live Cache Lifespan Strip**:
   - Prompt token breakdown (`Cache Read` vs `New Input`) with live `+N` delta pills on updates.
-  - Live 1-second ticker for `Last Chat`, `Cache Model`, and learned `Cache TTL` countdown.
+  - Live 1-second ticker for `Last Chat`, `Cache Model`, and learned `Cache TTL` with clean foreground bounds and a single status countdown pill.
 - **Generation Output & 3-Level Tool Calls Tree**:
   - Splits output into `Thinking` and `Response & Tools` against the model's output ceiling.
-  - Expandable 3-level **Tool Calls** tree: `Total Calls → Tool Name (count & share %) → Target File / Command`.
+  - Clickable **Tool Calls** row opening an in-SPA drill-down page: `Total Calls → Tool Name (count & share %) → Target File / Command`.
 - **Paginated Telemetry Ledger (`By Prompt` | `By Step`)**:
+  - All telemetry rows default to compacted format on load for instant scanning.
   - **By Prompt**: Groups internal agent tool loops by user prompt boundary with model routing chains, estimated 5h/weekly quota cost, and cache hit status chips.
   - **By Step**: Granular per-LLM-call ledger with visual left-hand prompt-grouping brackets across steps and pages (`15` items/page).
 
@@ -84,7 +85,7 @@ Complete analytical breakdown for deep inspection:
 - **Global Tab**:
   - **Separated Per-Account Storage**: Automatically isolates global token ledgers, learned cache TTL bounds, quota correlation samples, and snapshots by logged-in account (`email · plan`).
   - **All-Time & Since-Reset Totals**: Aggregates all local Antigravity conversations in the background without blocking the UI.
-  - **Manual & Auto 100% Quota Snapshots**: Saves named snapshots manually or automatically when a quota cycle hits 100%, plus full JSON export/import.
+  - **Saved & Compacted Snapshots**: Save named snapshot checkpoints on demand, inspect individual snapshots on dedicated in-SPA detail views, or export/import full JSON state across devices.
 - **Per-Model Filter Dropdown**: Filter Session, Coding HUD, Quotas, and Global views to a single model or `All Models`.
 
 ---

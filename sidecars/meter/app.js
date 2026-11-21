@@ -45,6 +45,7 @@
   let toolTreeExpanded = false;
   const expandedToolNames = new Set();
   const expandedSnapshotIds = new Set();
+  const expandedQuotaPoolIds = new Set();
 
   // Telemetry item compaction: default mode + per-item overrides
   let defaultItemsCompact = localStorage.getItem('token_meter_items_default_compact') === 'true';
@@ -66,8 +67,8 @@
   }
 
   // Persisted UI preferences: visible sections, compacted sections, telemetry fields
-  const DEFAULT_SECTIONS = { windowUtil: true, activeTurn: true, genOutput: true, sessionTotals: true, telemetry: true };
-  const DEFAULT_SECTION_COMPACT = { windowUtil: false, activeTurn: false, genOutput: false, sessionTotals: false, telemetry: false };
+  const DEFAULT_SECTIONS = { windowUtil: true, quotas: true, activeTurn: true, genOutput: true, sessionTotals: true, telemetry: true };
+  const DEFAULT_SECTION_COMPACT = { windowUtil: false, quotas: false, activeTurn: false, genOutput: false, sessionTotals: false, telemetry: false };
   const DEFAULT_TELEMETRY_FIELDS = { model: true, chat: true, calls: true, cache: true };
 
   function loadJsonPref(key, defaults) {
@@ -172,7 +173,9 @@
   const agentsSummaryMeta = document.getElementById('agentsSummaryMeta');
   const agentsList = document.getElementById('agentsList');
 
-  // DOM Elements - Global Tab
+  // DOM Elements - Global & Quotas
+  const sessionAccountBadge = document.getElementById('sessionAccountBadge');
+  const sessionQuotaPoolsList = document.getElementById('sessionQuotaPoolsList');
   const globalAccountBadge = document.getElementById('globalAccountBadge');
   const quotaPoolsList = document.getElementById('quotaPoolsList');
   const globalTotalVal = document.getElementById('globalTotalVal');
@@ -667,49 +670,112 @@
     return `${mins}m`;
   }
 
+  function renderQuotaPoolsInto(containerEl, pools, filterModel) {
+    if (!containerEl) return;
+    let list = pools || [];
+    if (filterModel && filterModel !== 'all') {
+      const lower = filterModel.toLowerCase();
+      const matched = list.filter(p => (p.models || []).some(m => m.toLowerCase() === lower));
+      if (matched.length) list = matched;
+    }
+
+    if (!list.length) {
+      containerEl.innerHTML = `<div class="empty-state">No quota pool data reported by Antigravity.</div>`;
+      return;
+    }
+
+    containerEl.innerHTML = list.map(p => {
+      const used = Math.min(100, Math.max(0, p.usedPct || 0));
+      const barColor = used >= 80 ? 'var(--tm-crit)' : (used >= 50 ? 'var(--tm-warn)' : 'var(--tm-ok)');
+      const winTag = p.windowType === 'weekly' ? 'Weekly' : '5h';
+      const resetLabel = p.resetTime ? `Resets in ${formatCountdown(p.msUntilReset)}` : '';
+      const isOpen = expandedQuotaPoolIds.has(p.poolId);
+      const corr = p.correlation;
+
+      let detailsHtml = '';
+      if (corr && corr.hasData) {
+        const p1 = corr.per1Pct;
+        const rem = corr.estRemaining;
+        const full = corr.estFull100;
+        const modelsHtml = (corr.byModel || []).length
+          ? `<div class="quota-subhead"><span>Model Share</span><span>Est. %</span></div>
+             ${corr.byModel.map(m => `
+               <div class="item-ledger-row">
+                 <span class="routing-pill ${getModelPillClass(m.model)}">${escapeHtml(m.model)}</span>
+                 <span class="item-ledger-val">${formatCompactNum(m.totalProcessedTokens)} · ~${m.estPctUsed}%</span>
+               </div>
+             `).join('')}`
+          : '';
+
+        detailsHtml = `
+          <div class="quota-subhead"><span>Per 1% of ${winTag} Quota</span><span>(${corr.observedPct}% obs)</span></div>
+          ${renderLedgerRows([
+            { dot: 'dot-cache', label: 'Cache Read / 1%', value: formatCompactNum(p1.cacheReadTokens), valClass: 'val-cache' },
+            { dot: 'dot-input', label: 'New Input / 1%', value: formatCompactNum(p1.inputTokens) },
+            { dot: 'dot-think', label: 'Thinking / 1%', value: formatCompactNum(p1.thinkingTokens), valClass: 'val-think' },
+            { dot: 'dot-output', label: 'Response / 1%', value: formatCompactNum(p1.responseTokens) },
+            { dot: 'dot-total', label: 'Total / 1%', value: `${formatCompactNum(p1.totalProcessedTokens)} (~${p1.turns}t)`, valClass: 'val-strong' }
+          ])}
+          <div class="quota-subhead"><span>Estimates (${p.remainingPct.toFixed(1)}% left)</span><span>~${formatNum(rem.turns)} turns</span></div>
+          ${renderLedgerRows([
+            { dot: 'dot-total', label: 'Est. Remaining', value: formatCompactNum(rem.totalProcessedTokens), valClass: 'val-strong' },
+            { dot: 'dot-total', label: 'Est. 100% Budget', value: `${formatCompactNum(full.totalProcessedTokens)} (~${formatNum(full.turns)}t)` }
+          ])}
+          ${modelsHtml}
+        `;
+      } else {
+        const obs = corr?.observedPct || 0;
+        detailsHtml = `<div class="quota-learning-note">Collecting 1% token correlation (${obs}% / 0.5% min delta observed). Use models in this pool to unlock per-1% &amp; runway estimates.</div>`;
+      }
+
+      const subRight = corr?.hasData
+        ? `~${formatCompactNum(corr.per1Pct.totalProcessedTokens)}/1% · ${resetLabel}`
+        : resetLabel;
+
+      return `
+        <div class="quota-pool-item${isOpen ? ' expanded' : ''}" data-pool-id="${escapeHtml(p.poolId)}" title="Click to expand per-1% token breakdown & estimates">
+          <div class="quota-pool-top">
+            <span class="quota-pool-left">
+              <span class="quota-pool-label">${escapeHtml(p.label)}</span>
+              <span class="quota-win-pill ${p.windowType === 'weekly' ? 'weekly' : ''}">${winTag}</span>
+            </span>
+            <span class="meta-strong" style="color: ${barColor}">${used.toFixed(1)}% used</span>
+          </div>
+          <div class="quota-pool-bar">
+            <div class="quota-pool-fill" style="width: ${used}%; background: ${barColor}"></div>
+          </div>
+          <div class="quota-pool-sub">
+            <span>${p.remainingPct.toFixed(1)}% left</span>
+            <span>${escapeHtml(subRight)}</span>
+          </div>
+          <div class="quota-pool-details">${detailsHtml}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
   // ---------- Global Usage Rendering ----------
   function renderGlobalView(data) {
     if (!data) return;
 
-    // Logged-in account badge
-    if (globalAccountBadge && data.account) {
+    // Logged-in account badges (both Global and Session tabs)
+    if (data.account) {
       const acct = data.account;
-      globalAccountBadge.textContent = `${acct.email}${acct.planName ? ` · ${acct.planName}` : ''}`;
-      globalAccountBadge.title = `Separated storage for ${acct.name} (${acct.email})`;
-    }
-
-    // 5-Hour & Weekly Quota Pools
-    if (quotaPoolsList) {
-      const pools = data.quotaPools || [];
-      if (!pools.length) {
-        quotaPoolsList.innerHTML = `<div class="empty-state">No quota pool data reported by Antigravity.</div>`;
-      } else {
-        quotaPoolsList.innerHTML = pools.map(p => {
-          const used = Math.min(100, Math.max(0, p.usedPct || 0));
-          const barColor = used >= 80 ? 'var(--tm-crit)' : (used >= 50 ? 'var(--tm-warn)' : 'var(--tm-ok)');
-          const winTag = p.windowType === 'weekly' ? 'Weekly' : '5h';
-          const resetLabel = p.resetTime ? `Resets in ${formatCountdown(p.msUntilReset)}` : '';
-          return `
-            <div class="quota-pool-item" title="Models: ${escapeHtml((p.models || []).join(', '))}">
-              <div class="quota-pool-top">
-                <span class="quota-pool-left">
-                  <span class="quota-pool-label">${escapeHtml(p.label)}</span>
-                  <span class="quota-win-pill ${p.windowType === 'weekly' ? 'weekly' : ''}">${winTag}</span>
-                </span>
-                <span class="meta-strong" style="color: ${barColor}">${used.toFixed(1)}% used</span>
-              </div>
-              <div class="quota-pool-bar">
-                <div class="quota-pool-fill" style="width: ${used}%; background: ${barColor}"></div>
-              </div>
-              <div class="quota-pool-sub">
-                <span>${p.remainingPct.toFixed(1)}% left · auto-snapshots at 100%</span>
-                <span>${escapeHtml(resetLabel)}</span>
-              </div>
-            </div>
-          `;
-        }).join('');
+      const acctText = `${acct.email}${acct.planName ? ` · ${acct.planName}` : ''}`;
+      const acctTitle = `Separated storage for ${acct.name} (${acct.email})`;
+      if (globalAccountBadge) {
+        globalAccountBadge.textContent = acctText;
+        globalAccountBadge.title = acctTitle;
+      }
+      if (sessionAccountBadge) {
+        sessionAccountBadge.textContent = acctText;
+        sessionAccountBadge.title = acctTitle;
       }
     }
+
+    // 5-Hour & Weekly Quota Pools (rendered in both Session & Global tabs)
+    renderQuotaPoolsInto(sessionQuotaPoolsList, data.quotaPools || [], selectedModel);
+    renderQuotaPoolsInto(quotaPoolsList, data.quotaPools || [], selectedModel);
 
     const filtered = selectedModel !== 'all' ? (data.byModel?.[selectedModel] || null) : null;
     const tot = filtered || data.current || {};
@@ -999,13 +1065,29 @@
   if (modelFilterSelect) {
     modelFilterSelect.addEventListener('change', () => {
       selectedModel = modelFilterSelect.value || 'all';
-      if (activeTab === 'global' && globalUsageData) {
-        renderGlobalView(globalUsageData);
-      } else if (currentTelemetry) {
+      if (globalUsageData) renderGlobalView(globalUsageData);
+      if (activeTab !== 'global' && currentTelemetry) {
         renderDashboard(currentTelemetry);
       }
     });
   }
+
+  // Click any quota pool (on Session or Global tab) to expand per-1% breakdown & estimates
+  [sessionQuotaPoolsList, quotaPoolsList].forEach((container) => {
+    if (!container) return;
+    container.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = e.target.closest('.quota-pool-item');
+      const pid = item?.dataset?.poolId;
+      if (!pid) return;
+      if (expandedQuotaPoolIds.has(pid)) expandedQuotaPoolIds.delete(pid);
+      else expandedQuotaPoolIds.add(pid);
+      if (globalUsageData) {
+        renderQuotaPoolsInto(sessionQuotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
+        renderQuotaPoolsInto(quotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
+      }
+    });
+  });
 
   // ---------- Agents Interactions ----------
   if (agentsList) {
@@ -1217,7 +1299,7 @@
   document.querySelectorAll('.compactable-section').forEach((sec) => {
     sec.addEventListener('click', (e) => {
       if (window.getSelection && String(window.getSelection()).length) return;
-      if (e.target.closest('button, input, label, select, .popover-menu, .tool-tree-toggle, .tool-tree-list')) return;
+      if (e.target.closest('button, input, label, select, .popover-menu, .tool-tree-toggle, .tool-tree-list, .quota-pool-item')) return;
       toggleSectionCompact(sec.dataset.section);
     });
     sec.addEventListener('keydown', (e) => {
@@ -1390,6 +1472,7 @@
 
   // Initial load & polling
   fetchTelemetry();
+  fetchGlobalUsage();
   setInterval(() => {
     if (activeTab !== 'global') fetchTelemetry();
   }, POLL_MS);

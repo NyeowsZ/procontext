@@ -209,9 +209,96 @@ function computeAllTimeFromCache(convCache) {
   return { allTimeTotals, allTimeByModel };
 }
 
+function sumModelsInPool(byModelMap, poolModels) {
+  const poolSet = new Set((poolModels || []).map(m => m.toLowerCase()));
+  const total = emptyTotals();
+  const matched = {};
+  for (const [mName, mTot] of Object.entries(byModelMap || {})) {
+    if (poolSet.has(mName.toLowerCase())) {
+      addTotals(total, mTot);
+      matched[mName] = { ...mTot };
+    }
+  }
+  return { total, byModel: matched };
+}
+
+function buildPoolCorrelation(pool, cycle) {
+  const obsPct = Number(cycle?.observedPct || 0);
+  const obsTot = cycle?.observedTokens || emptyTotals();
+  const obsByModel = cycle?.observedByModel || {};
+
+  if (obsPct < 0.5 || obsTot.totalProcessedTokens <= 0) {
+    return {
+      hasData: false,
+      observedPct: parseFloat(obsPct.toFixed(2)),
+      per1Pct: null,
+      estRemaining: null,
+      estFull100: null,
+      byModel: []
+    };
+  }
+
+  const per1 = {
+    inputTokens: Math.round(obsTot.inputTokens / obsPct),
+    cacheReadTokens: Math.round(obsTot.cacheReadTokens / obsPct),
+    thinkingTokens: Math.round(obsTot.thinkingTokens / obsPct),
+    responseTokens: Math.round(obsTot.responseTokens / obsPct),
+    totalProcessedTokens: Math.round(obsTot.totalProcessedTokens / obsPct),
+    turns: parseFloat((obsTot.totalTurns / obsPct).toFixed(1))
+  };
+
+  const remPct = Math.max(0, Number(pool.remainingPct || 0));
+  const estRemaining = {
+    inputTokens: Math.round(per1.inputTokens * remPct),
+    cacheReadTokens: Math.round(per1.cacheReadTokens * remPct),
+    thinkingTokens: Math.round(per1.thinkingTokens * remPct),
+    responseTokens: Math.round(per1.responseTokens * remPct),
+    totalProcessedTokens: Math.round(per1.totalProcessedTokens * remPct),
+    turns: Math.round((obsTot.totalTurns / obsPct) * remPct)
+  };
+
+  const estFull100 = {
+    inputTokens: per1.inputTokens * 100,
+    cacheReadTokens: per1.cacheReadTokens * 100,
+    thinkingTokens: per1.thinkingTokens * 100,
+    responseTokens: per1.responseTokens * 100,
+    totalProcessedTokens: per1.totalProcessedTokens * 100,
+    turns: Math.round((obsTot.totalTurns / obsPct) * 100)
+  };
+
+  const byModel = Object.entries(obsByModel)
+    .map(([mName, mTot]) => {
+      const share = obsTot.totalProcessedTokens > 0 ? (mTot.totalProcessedTokens / obsTot.totalProcessedTokens) : 0;
+      const estPctUsed = parseFloat((share * obsPct).toFixed(2));
+      return {
+        model: mName,
+        inputTokens: mTot.inputTokens || 0,
+        cacheReadTokens: mTot.cacheReadTokens || 0,
+        thinkingTokens: mTot.thinkingTokens || 0,
+        responseTokens: mTot.responseTokens || 0,
+        totalProcessedTokens: mTot.totalProcessedTokens || 0,
+        turns: mTot.totalTurns || 0,
+        sharePct: parseFloat((share * 100).toFixed(1)),
+        estPctUsed
+      };
+    })
+    .filter(m => m.totalProcessedTokens > 0)
+    .sort((a, b) => b.totalProcessedTokens - a.totalProcessedTokens);
+
+  return {
+    hasData: true,
+    observedPct: parseFloat(obsPct.toFixed(1)),
+    per1Pct: per1,
+    estRemaining,
+    estFull100,
+    byModel
+  };
+}
+
 /**
- * Checks each quota pool (5h / Weekly) for 100% exhaustion or 100% reset cycle transitions
- * and automatically records a snapshot capturing exact token & per-model usage for that cycle.
+ * Checks each quota pool (5h / Weekly) for:
+ * 1) Incremental quota % vs token consumption correlation (tokens per 1% + remaining runway estimates)
+ * 2) 100% exhaustion or 100% reset cycle transitions -> automatic snapshot
  */
 function evaluateQuotaCycles(accountBucket, quotaPools, allTimeTotals, allTimeByModel, conversationCount) {
   let mutated = false;
@@ -229,10 +316,38 @@ function evaluateQuotaCycles(accountBucket, quotaPools, allTimeTotals, allTimeBy
         cycleStartAt: nowIso,
         cycleStartTotals: { ...allTimeTotals },
         cycleStartByModel: cloneTotalsMap(allTimeByModel),
+        lastCheckByModel: cloneTotalsMap(allTimeByModel),
+        observedPct: 0,
+        observedTokens: emptyTotals(),
+        observedByModel: {},
         autoSnapshottedForResetTime: null
       };
       mutated = true;
       continue;
+    }
+
+    if (!existing.observedTokens) existing.observedTokens = emptyTotals();
+    if (!existing.observedByModel) existing.observedByModel = {};
+    if (!existing.lastCheckByModel) existing.lastCheckByModel = cloneTotalsMap(allTimeByModel);
+
+    // Accumulate incremental quota % vs token delta for this pool's models (when same window & quota moved up)
+    const sameWindow = existing.lastResetTime === pool.resetTime;
+    const pctStep = sameWindow ? (pool.usedPct - (existing.lastUsedPct || 0)) : 0;
+    const stepByModelDiff = diffByModel(allTimeByModel, existing.lastCheckByModel);
+    const poolStep = sumModelsInPool(stepByModelDiff, pool.models);
+
+    if (pctStep > 0.05 && poolStep.total.totalProcessedTokens > 0) {
+      existing.observedPct = (existing.observedPct || 0) + pctStep;
+      addTotals(existing.observedTokens, poolStep.total);
+      for (const [mName, mTot] of Object.entries(poolStep.byModel)) {
+        if (!existing.observedByModel[mName]) existing.observedByModel[mName] = emptyTotals();
+        addTotals(existing.observedByModel[mName], mTot);
+      }
+      existing.lastCheckByModel = cloneTotalsMap(allTimeByModel);
+      mutated = true;
+    } else if (!sameWindow) {
+      existing.lastCheckByModel = cloneTotalsMap(allTimeByModel);
+      mutated = true;
     }
 
     const hit100Used = pool.usedPct >= 99.5 && existing.autoSnapshottedForResetTime !== pool.resetTime;
@@ -359,11 +474,17 @@ export async function getGlobalUsage() {
   const currentTotals = subtractTotals(allTimeTotals, accountBucket.baseline?.totals);
   const currentByModel = diffByModel(allTimeByModel, accountBucket.baseline?.byModel);
 
+  // Attach per-1% token correlation & remaining runway estimates to each quota pool
+  const enrichedQuotaPools = (quotaPools || []).map(pool => ({
+    ...pool,
+    correlation: buildPoolCorrelation(pool, accountBucket.quotaCycles[pool.poolId])
+  }));
+
   if (dirty) saveStore(store);
 
   return {
     account,
-    quotaPools,
+    quotaPools: enrichedQuotaPools,
     updatedAt: new Date().toISOString(),
     conversationCount: convCount,
     pendingCount: remainingToScan,

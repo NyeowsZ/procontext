@@ -37,6 +37,7 @@
           <div class="popover-menu" id="headerMenu" role="menu" aria-label="Visible sections">
             <div class="popover-title">Sections</div>
             <label class="popover-item"><input type="checkbox" data-section-toggle="windowUtil" checked><span>Window Util</span></label>
+            <label class="popover-item"><input type="checkbox" data-section-toggle="quotas" checked><span>Quotas</span></label>
             <label class="popover-item"><input type="checkbox" data-section-toggle="activeTurn" checked><span>Active Turn</span></label>
             <label class="popover-item"><input type="checkbox" data-section-toggle="genOutput" checked><span>Gen Output</span></label>
             <label class="popover-item"><input type="checkbox" data-section-toggle="sessionTotals" checked><span>Session Total</span></label>
@@ -103,6 +104,19 @@
             <div class="compaction-alert" id="compactionAlert" style="display: none;">
               <div class="compaction-title font-mono" id="compactionTitle">Context Compaction Active</div>
               <div class="compaction-desc" id="compactionDesc">History checkpoints summarized earlier turns.</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Account & 5h / Weekly Quota Pools (with Per-1% Token Correlation & Estimates) -->
+        <section class="section-block compactable-section" id="secSessionQuotas" data-section="quotas" role="button" tabindex="0" aria-expanded="true" title="Click to compact">
+          <div class="section-header-row">
+            <span class="section-label">Account &amp; Quotas</span>
+            <span class="badge account-badge font-mono" id="sessionAccountBadge">Loading…</span>
+          </div>
+          <div class="section-body">
+            <div id="sessionQuotaPoolsList" class="quota-pools-list font-mono">
+              <div class="empty-state">Loading 5h &amp; weekly quotas…</div>
             </div>
           </div>
         </section>

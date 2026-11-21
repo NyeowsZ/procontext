@@ -641,10 +641,40 @@ button { font: inherit; color: inherit; cursor: pointer; }
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 6px 0;
+  padding: 6px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
   border-bottom: 1px solid var(--cx-border);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 140ms var(--ease-out);
 }
 .quota-pool-item:last-child { border-bottom: none; }
+.quota-pool-item:hover { background: var(--cx-hover); }
+.quota-pool-details {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--cx-border);
+}
+.quota-pool-item.expanded .quota-pool-details { display: flex; }
+.quota-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--cx-fg-muted);
+}
+.quota-learning-note {
+  font-size: 11px;
+  color: var(--cx-fg-muted);
+  padding: 2px 0;
+}
 .quota-pool-top {
   display: flex;
   align-items: center;

@@ -83,7 +83,9 @@ function emptyAccountBucket() {
     baselineAt: null,
     baseline: { totals: emptyTotals(), byModel: {} },
     snapshots: [],
-    quotaCycles: {}
+    quotaCycles: {},
+    cacheLifespanByModel: {},
+    convLifespan: {}
   };
 }
 
@@ -129,7 +131,80 @@ function getAccountBucket(store, accountKey) {
   if (!bucket.baseline) bucket.baseline = { totals: emptyTotals(), byModel: {} };
   if (!Array.isArray(bucket.snapshots)) bucket.snapshots = [];
   if (!bucket.quotaCycles || typeof bucket.quotaCycles !== 'object') bucket.quotaCycles = {};
+  if (!bucket.cacheLifespanByModel || typeof bucket.cacheLifespanByModel !== 'object') bucket.cacheLifespanByModel = {};
+  if (!bucket.convLifespan || typeof bucket.convLifespan !== 'object') bucket.convLifespan = {};
   return bucket;
+}
+
+export function getPersistedAccountCacheLifespan(accountKey) {
+  try {
+    const store = loadStore();
+    const bucket = getAccountBucket(store, accountKey);
+    return bucket.cacheLifespanByModel || {};
+  } catch {
+    return {};
+  }
+}
+
+export function updatePersistedAccountCacheLifespan(accountKey, cascadeId, convLifespanMap) {
+  if (!cascadeId || !convLifespanMap || typeof convLifespanMap !== 'object') return {};
+  try {
+    const store = loadStore();
+    const bucket = getAccountBucket(store, accountKey);
+    if (!bucket.convLifespan) bucket.convLifespan = {};
+
+    const valid = {};
+    for (const [mName, b] of Object.entries(convLifespanMap)) {
+      if (!b) continue;
+      const warm = Number(b.warmSamples || 0);
+      const cold = Number(b.coldSamples || 0);
+      if (warm > 0 || cold > 0 || b.maxWarmGapMs !== null || b.minColdGapMs !== null) {
+        valid[mName] = {
+          maxWarmGapMs: typeof b.maxWarmGapMs === 'number' ? b.maxWarmGapMs : null,
+          minColdGapMs: typeof b.minColdGapMs === 'number' ? b.minColdGapMs : null,
+          warmSamples: warm,
+          coldSamples: cold
+        };
+      }
+    }
+
+    if (Object.keys(valid).length === 0) {
+      return bucket.cacheLifespanByModel || {};
+    }
+
+    bucket.convLifespan[cascadeId] = valid;
+
+    // Recompute aggregated survival bounds across all recorded conversations
+    const aggregated = {};
+    for (const convMap of Object.values(bucket.convLifespan)) {
+      for (const [mName, stats] of Object.entries(convMap || {})) {
+        if (!aggregated[mName]) {
+          aggregated[mName] = {
+            maxWarmGapMs: null,
+            minColdGapMs: null,
+            warmSamples: 0,
+            coldSamples: 0
+          };
+        }
+        const a = aggregated[mName];
+        if (stats.maxWarmGapMs !== null && stats.maxWarmGapMs !== undefined) {
+          a.maxWarmGapMs = a.maxWarmGapMs === null ? stats.maxWarmGapMs : Math.max(a.maxWarmGapMs, stats.maxWarmGapMs);
+        }
+        if (stats.minColdGapMs !== null && stats.minColdGapMs !== undefined) {
+          a.minColdGapMs = a.minColdGapMs === null ? stats.minColdGapMs : Math.min(a.minColdGapMs, stats.minColdGapMs);
+        }
+        a.warmSamples += (stats.warmSamples || 0);
+        a.coldSamples += (stats.coldSamples || 0);
+      }
+    }
+
+    bucket.cacheLifespanByModel = aggregated;
+    saveStore(store);
+    return aggregated;
+  } catch (err) {
+    console.error('[GlobalStore] Failed to update persisted cache lifespan:', err.message);
+    return {};
+  }
 }
 
 function saveStore(store) {
@@ -222,19 +297,47 @@ function sumModelsInPool(byModelMap, poolModels) {
   return { total, byModel: matched };
 }
 
-function buildPoolCorrelation(pool, cycle) {
+function buildPoolCorrelation(pool, cycle, fallbackByModel = null) {
   const obsPct = Number(cycle?.observedPct || 0);
   const obsTot = cycle?.observedTokens || emptyTotals();
   const obsByModel = cycle?.observedByModel || {};
 
   if (obsPct < 0.5 || obsTot.totalProcessedTokens <= 0) {
+    // If not enough observed cycle delta yet, extract fallback models from session / current usage
+    let fallbackModels = [];
+    if (fallbackByModel && typeof fallbackByModel === 'object') {
+      const { total: fbTotal, byModel: fbMatched } = sumModelsInPool(fallbackByModel, pool.models);
+      if (fbTotal.totalProcessedTokens > 0) {
+        fallbackModels = Object.entries(fbMatched).map(([mName, mTot]) => {
+          const share = fbTotal.totalProcessedTokens > 0 ? (mTot.totalProcessedTokens / fbTotal.totalProcessedTokens) : 0;
+          const denom = (mTot.inputTokens || 0) + (mTot.cacheReadTokens || 0);
+          return {
+            model: mName,
+            inputTokens: mTot.inputTokens || 0,
+            cacheReadTokens: mTot.cacheReadTokens || 0,
+            thinkingTokens: mTot.thinkingTokens || 0,
+            responseTokens: mTot.responseTokens || 0,
+            totalProcessedTokens: mTot.totalProcessedTokens || 0,
+            turns: mTot.totalTurns || 0,
+            cacheEfficiencyPct: denom > 0 ? ((mTot.cacheReadTokens / denom) * 100).toFixed(1) : '0.0',
+            sharePct: parseFloat((share * 100).toFixed(1)),
+            estPctUsed: parseFloat((share * (pool.usedPct || 0)).toFixed(2)),
+            per1Pct: null,
+            estRemaining: null,
+            estFull100: null
+          };
+        }).filter(m => m.totalProcessedTokens > 0)
+          .sort((a, b) => b.totalProcessedTokens - a.totalProcessedTokens);
+      }
+    }
+
     return {
       hasData: false,
       observedPct: parseFloat(obsPct.toFixed(2)),
       per1Pct: null,
       estRemaining: null,
       estFull100: null,
-      byModel: []
+      byModel: fallbackModels
     };
   }
 
@@ -270,6 +373,42 @@ function buildPoolCorrelation(pool, cycle) {
     .map(([mName, mTot]) => {
       const share = obsTot.totalProcessedTokens > 0 ? (mTot.totalProcessedTokens / obsTot.totalProcessedTokens) : 0;
       const estPctUsed = parseFloat((share * obsPct).toFixed(2));
+      const denom = (mTot.inputTokens || 0) + (mTot.cacheReadTokens || 0);
+
+      let modelPer1 = null;
+      let modelRemaining = null;
+      let modelFull100 = null;
+
+      if (estPctUsed >= 0.05) {
+        modelPer1 = {
+          inputTokens: Math.round(mTot.inputTokens / estPctUsed),
+          cacheReadTokens: Math.round(mTot.cacheReadTokens / estPctUsed),
+          thinkingTokens: Math.round(mTot.thinkingTokens / estPctUsed),
+          responseTokens: Math.round(mTot.responseTokens / estPctUsed),
+          totalProcessedTokens: Math.round(mTot.totalProcessedTokens / estPctUsed),
+          turns: parseFloat(((mTot.totalTurns || 0) / estPctUsed).toFixed(1))
+        };
+
+        const remPctForModel = remPct * share;
+        modelRemaining = {
+          inputTokens: Math.round(modelPer1.inputTokens * remPctForModel),
+          cacheReadTokens: Math.round(modelPer1.cacheReadTokens * remPctForModel),
+          thinkingTokens: Math.round(modelPer1.thinkingTokens * remPctForModel),
+          responseTokens: Math.round(modelPer1.responseTokens * remPctForModel),
+          totalProcessedTokens: Math.round(modelPer1.totalProcessedTokens * remPctForModel),
+          turns: Math.round(((mTot.totalTurns || 0) / estPctUsed) * remPctForModel)
+        };
+
+        modelFull100 = {
+          inputTokens: Math.round(modelPer1.inputTokens * 100 * share),
+          cacheReadTokens: Math.round(modelPer1.cacheReadTokens * 100 * share),
+          thinkingTokens: Math.round(modelPer1.thinkingTokens * 100 * share),
+          responseTokens: Math.round(modelPer1.responseTokens * 100 * share),
+          totalProcessedTokens: Math.round(modelPer1.totalProcessedTokens * 100 * share),
+          turns: Math.round(((mTot.totalTurns || 0) / estPctUsed) * 100 * share)
+        };
+      }
+
       return {
         model: mName,
         inputTokens: mTot.inputTokens || 0,
@@ -278,8 +417,12 @@ function buildPoolCorrelation(pool, cycle) {
         responseTokens: mTot.responseTokens || 0,
         totalProcessedTokens: mTot.totalProcessedTokens || 0,
         turns: mTot.totalTurns || 0,
+        cacheEfficiencyPct: denom > 0 ? ((mTot.cacheReadTokens / denom) * 100).toFixed(1) : '0.0',
         sharePct: parseFloat((share * 100).toFixed(1)),
-        estPctUsed
+        estPctUsed,
+        per1Pct: modelPer1,
+        estRemaining: modelRemaining,
+        estFull100: modelFull100
       };
     })
     .filter(m => m.totalProcessedTokens > 0)
@@ -477,7 +620,7 @@ export async function getGlobalUsage() {
   // Attach per-1% token correlation & remaining runway estimates to each quota pool
   const enrichedQuotaPools = (quotaPools || []).map(pool => ({
     ...pool,
-    correlation: buildPoolCorrelation(pool, accountBucket.quotaCycles[pool.poolId])
+    correlation: buildPoolCorrelation(pool, accountBucket.quotaCycles[pool.poolId], currentByModel)
   }));
 
   if (dirty) saveStore(store);
@@ -492,6 +635,7 @@ export async function getGlobalUsage() {
     current: currentTotals,
     allTime: subtractTotals(allTimeTotals, null),
     byModel: currentByModel,
+    persistedCacheLifespan: accountBucket.cacheLifespanByModel || {},
     snapshots: accountBucket.snapshots
   };
 }

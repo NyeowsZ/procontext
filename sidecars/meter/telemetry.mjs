@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+import { getPersistedAccountCacheLifespan, updatePersistedAccountCacheLifespan } from './global-store.mjs';
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -479,10 +480,11 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
     throw new Error('No active conversation or cascadeId found.');
   }
 
-  // Fetch complete trajectory and models in parallel
-  const [trajResp, modelsResp] = await Promise.all([
+  // Fetch complete trajectory, models, and active account in parallel
+  const [trajResp, modelsResp, account] = await Promise.all([
     callLanguageServerRpc('GetCascadeTrajectory', { cascade_id: cascadeId }),
-    getModelLimits().catch(() => ({}))
+    getModelLimits().catch(() => ({})),
+    getCurrentAccount().catch(() => ({ accountKey: 'local-default', email: 'Local Account', name: 'Local User', planName: 'Standard' }))
   ]);
 
   const traj = trajResp.trajectory || {};
@@ -700,10 +702,10 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
     }
   }
 
-  function finalizeLifespan(bucket) {
-    const sampleCount = bucket.warmSamples + bucket.coldSamples;
-    const hasWarm = bucket.maxWarmGapMs !== null;
-    const hasCold = bucket.minColdGapMs !== null;
+  function finalizeLifespan(bucket, isPersisted = false) {
+    const sampleCount = (bucket?.warmSamples || 0) + (bucket?.coldSamples || 0);
+    const hasWarm = bucket?.maxWarmGapMs !== null && bucket?.maxWarmGapMs !== undefined;
+    const hasCold = bucket?.minColdGapMs !== null && bucket?.minColdGapMs !== undefined;
     let status = 'no_data';
     let estimatedTtlMs = null;
     if (hasWarm && hasCold && bucket.minColdGapMs > bucket.maxWarmGapMs) {
@@ -719,11 +721,12 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
     return {
       status,
       sampleCount,
-      warmSamples: bucket.warmSamples,
-      coldSamples: bucket.coldSamples,
-      maxWarmGapMs: bucket.maxWarmGapMs,
-      minColdGapMs: bucket.minColdGapMs,
-      estimatedTtlMs
+      warmSamples: bucket?.warmSamples || 0,
+      coldSamples: bucket?.coldSamples || 0,
+      maxWarmGapMs: bucket?.maxWarmGapMs ?? null,
+      minColdGapMs: bucket?.minColdGapMs ?? null,
+      estimatedTtlMs,
+      isPersisted: Boolean(isPersisted || bucket?.isPersisted)
     };
   }
 
@@ -814,12 +817,46 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
     };
   });
 
+  // Persist current chat's raw survival observations to global store and retrieve cross-chat bounds
+  const updatedPersisted = updatePersistedAccountCacheLifespan(account.accountKey, cascadeId, lifespanByModel);
+
   const finalizedLifespanByModel = {};
-  for (const [mName, b] of Object.entries(lifespanByModel)) {
-    finalizedLifespanByModel[mName] = finalizeLifespan(b);
+  // 1. Seed with cross-chat persisted bounds
+  for (const [mName, pBucket] of Object.entries(updatedPersisted || {})) {
+    finalizedLifespanByModel[mName] = finalizeLifespan(pBucket, true);
   }
+  // 2. Merge with current session bounds
+  for (const [mName, b] of Object.entries(lifespanByModel)) {
+    const pBucket = updatedPersisted?.[mName];
+    if (pBucket) {
+      const merged = {
+        maxWarmGapMs: pBucket.maxWarmGapMs !== null && b.maxWarmGapMs !== null
+          ? Math.max(pBucket.maxWarmGapMs, b.maxWarmGapMs)
+          : (pBucket.maxWarmGapMs ?? b.maxWarmGapMs),
+        minColdGapMs: pBucket.minColdGapMs !== null && b.minColdGapMs !== null
+          ? Math.min(pBucket.minColdGapMs, b.minColdGapMs)
+          : (pBucket.minColdGapMs ?? b.minColdGapMs),
+        warmSamples: Math.max(pBucket.warmSamples || 0, b.warmSamples || 0),
+        coldSamples: Math.max(pBucket.coldSamples || 0, b.coldSamples || 0),
+        isPersisted: true
+      };
+      finalizedLifespanByModel[mName] = finalizeLifespan(merged, true);
+    } else {
+      finalizedLifespanByModel[mName] = finalizeLifespan(b, false);
+    }
+  }
+
+  // 3. For overall lifespan: use session if it has samples; otherwise fallback to active model's learned bounds
+  let finalizedOverall = finalizeLifespan(overallLifespan, false);
+  if (finalizedOverall.sampleCount === 0) {
+    const warmModel = latestTurn?.modelDisplayName || activeModelDisplayName;
+    if (finalizedLifespanByModel[warmModel] && finalizedLifespanByModel[warmModel].sampleCount > 0) {
+      finalizedOverall = { ...finalizedLifespanByModel[warmModel] };
+    }
+  }
+
   const cacheLifespan = {
-    overall: finalizeLifespan(overallLifespan),
+    overall: finalizedOverall,
     byModel: finalizedLifespanByModel,
     lastChatCompletedAtMs: latestTurn?.completedAtMs || null,
     warmModelDisplayName: latestTurn?.modelDisplayName || activeModelDisplayName,
@@ -985,6 +1022,7 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
   return {
     cascadeId,
     timestamp: new Date().toISOString(),
+    account,
     healthStatus,
     sessionModels,
     isMultiModel,

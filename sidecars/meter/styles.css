@@ -670,6 +670,103 @@ button { font: inherit; color: inherit; cursor: pointer; }
   text-transform: uppercase;
   color: var(--cx-fg-muted);
 }
+.quota-model-focus-header {
+  padding: 3px 0 1px;
+}
+.quota-focus-label {
+  font-weight: 600;
+  color: var(--cx-fg);
+}
+.quota-focus-clear-btn,
+.quota-focus-btn {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  border: 1px solid var(--cx-border);
+  background: var(--cx-fill);
+  color: var(--cx-fg);
+  cursor: pointer;
+  transition: all 140ms var(--ease-out);
+}
+.quota-focus-clear-btn:hover,
+.quota-focus-btn:hover {
+  background: var(--cx-hover);
+  color: var(--cx-primary);
+  border-color: var(--cx-primary);
+}
+.quota-divider {
+  width: 100%;
+  border-top: 1px dashed var(--cx-border);
+  margin: 4px 0;
+}
+.quota-model-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cx-fill) 60%, transparent);
+  border: 1px solid transparent;
+  margin-top: 3px;
+  overflow: hidden;
+  transition: border-color 140ms var(--ease-out);
+}
+.quota-model-card.selected {
+  border-color: color-mix(in srgb, var(--cx-primary) 50%, transparent);
+}
+.quota-model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 6px;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.quota-model-row:hover {
+  background: var(--cx-hover);
+}
+.quota-model-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.quota-model-card.open .quota-model-left .tree-chev {
+  transform: rotate(90deg);
+}
+.quota-model-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.quota-model-share {
+  color: var(--cx-fg-muted);
+}
+.quota-model-used {
+  font-weight: 600;
+  color: var(--cx-fg);
+}
+.quota-model-drilldown {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 8px 6px;
+  border-top: 1px solid var(--cx-border);
+  background: color-mix(in srgb, var(--cx-bg) 80%, transparent);
+}
+.quota-drill-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--cx-fg-muted);
+  margin-top: 4px;
+  padding-top: 2px;
+  border-top: 1px dotted var(--cx-border);
+}
 .quota-learning-note {
   font-size: 11px;
   color: var(--cx-fg-muted);

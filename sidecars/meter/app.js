@@ -46,6 +46,7 @@
   const expandedToolNames = new Set();
   const expandedSnapshotIds = new Set();
   const expandedQuotaPoolIds = new Set();
+  const expandedQuotaModelNames = new Set();
 
   // Telemetry item compaction: default mode + per-item overrides
   let defaultItemsCompact = localStorage.getItem('token_meter_items_default_compact') === 'true';
@@ -638,22 +639,25 @@
     if (stat.maxWarmGapMs != null) parts.push(`Max warm gap: ${formatDurationShort(stat.maxWarmGapMs)}`);
     if (stat.minColdGapMs != null) parts.push(`Min cold gap: ${formatDurationShort(stat.minColdGapMs)}`);
     parts.push(`Chat-to-chat samples (≥30s): ${stat.sampleCount}`);
+    if (stat.isPersisted) parts.push('Storage: Learned across chats (persisted in account store)');
     cacheLifespanStrip.title = parts.join('\n');
 
+    const sampleTag = stat.isPersisted ? `${stat.sampleCount} across chats` : `${stat.sampleCount}`;
+
     if (stat.status === 'bracketed') {
-      cacheLifespanStat.textContent = `TTL ~${formatDurationShort(stat.maxWarmGapMs)}–${formatDurationShort(stat.minColdGapMs)}`;
+      cacheLifespanStat.textContent = `TTL ~${formatDurationShort(stat.maxWarmGapMs)}–${formatDurationShort(stat.minColdGapMs)} (${sampleTag})`;
       if (elapsedMs != null) {
         if (elapsedMs >= stat.minColdGapMs) cacheLifespanStat.classList.add('cold');
         else if (elapsedMs >= stat.maxWarmGapMs) cacheLifespanStat.classList.add('expiring');
         else cacheLifespanStat.classList.add('warm');
       }
     } else if (stat.status === 'lower_bound') {
-      cacheLifespanStat.textContent = `TTL ≥ ${formatDurationShort(stat.maxWarmGapMs)} (${stat.sampleCount})`;
+      cacheLifespanStat.textContent = `TTL ≥ ${formatDurationShort(stat.maxWarmGapMs)} (${sampleTag})`;
       if (elapsedMs != null && elapsedMs <= stat.maxWarmGapMs) {
         cacheLifespanStat.classList.add('warm');
       }
     } else if (stat.status === 'upper_bound') {
-      cacheLifespanStat.textContent = `TTL < ${formatDurationShort(stat.minColdGapMs)} (${stat.sampleCount})`;
+      cacheLifespanStat.textContent = `TTL < ${formatDurationShort(stat.minColdGapMs)} (${sampleTag})`;
       if (elapsedMs != null && elapsedMs >= stat.minColdGapMs) {
         cacheLifespanStat.classList.add('cold');
       }
@@ -673,9 +677,13 @@
   function renderQuotaPoolsInto(containerEl, pools, filterModel) {
     if (!containerEl) return;
     let list = pools || [];
-    if (filterModel && filterModel !== 'all') {
+    const isFiltered = filterModel && filterModel !== 'all';
+    if (isFiltered) {
       const lower = filterModel.toLowerCase();
-      const matched = list.filter(p => (p.models || []).some(m => m.toLowerCase() === lower));
+      const matched = list.filter(p =>
+        (p.models || []).some(m => m.toLowerCase().includes(lower)) ||
+        (p.correlation?.byModel || []).some(m => m.model.toLowerCase().includes(lower))
+      );
       if (matched.length) list = matched;
     }
 
@@ -693,34 +701,123 @@
       const corr = p.correlation;
 
       let detailsHtml = '';
-      if (corr && corr.hasData) {
+      if (corr && (corr.hasData || (corr.byModel && corr.byModel.length > 0))) {
         const p1 = corr.per1Pct;
         const rem = corr.estRemaining;
         const full = corr.estFull100;
-        const modelsHtml = (corr.byModel || []).length
-          ? `<div class="quota-subhead"><span>Model Share</span><span>Est. %</span></div>
-             ${corr.byModel.map(m => `
-               <div class="item-ledger-row">
-                 <span class="routing-pill ${getModelPillClass(m.model)}">${escapeHtml(m.model)}</span>
-                 <span class="item-ledger-val">${formatCompactNum(m.totalProcessedTokens)} · ~${m.estPctUsed}%</span>
-               </div>
-             `).join('')}`
-          : '';
+        const modelsList = corr.byModel || [];
+
+        // If filtered to a specific model, show that model's isolated separation block first
+        let focusedModelHtml = '';
+        if (isFiltered) {
+          const lower = filterModel.toLowerCase();
+          const targetM = modelsList.find(m => m.model.toLowerCase().includes(lower));
+          if (targetM) {
+            focusedModelHtml = `
+              <div class="quota-subhead quota-model-focus-header">
+                <span class="quota-focus-label">Separated: ${escapeHtml(targetM.model)}</span>
+                <button type="button" class="quota-focus-clear-btn" data-quota-action="clear-model">All Models</button>
+              </div>
+              ${renderLedgerRows([
+                { dot: 'dot-cache', label: 'Cache Read', value: `${formatCompactNum(targetM.cacheReadTokens)} (${targetM.cacheEfficiencyPct}%)`, valClass: 'val-cache' },
+                { dot: 'dot-input', label: 'New Input', value: formatCompactNum(targetM.inputTokens) },
+                { dot: 'dot-think', label: 'Thinking', value: formatCompactNum(targetM.thinkingTokens), valClass: 'val-think' },
+                { dot: 'dot-output', label: 'Response', value: formatCompactNum(targetM.responseTokens) },
+                { dot: 'dot-total', label: 'Model Total', value: `${formatCompactNum(targetM.totalProcessedTokens)} (${targetM.turns}t)`, valClass: 'val-strong' }
+              ])}
+              ${targetM.per1Pct ? `
+                <div class="quota-subhead"><span>${escapeHtml(targetM.model)} Burn / 1%</span><span>~${targetM.estPctUsed}% used (${targetM.sharePct}% share)</span></div>
+                ${renderLedgerRows([
+                  { dot: 'dot-cache', label: 'Cache / 1%', value: formatCompactNum(targetM.per1Pct.cacheReadTokens), valClass: 'val-cache' },
+                  { dot: 'dot-input', label: 'Input / 1%', value: formatCompactNum(targetM.per1Pct.inputTokens) },
+                  { dot: 'dot-think', label: 'Thinking / 1%', value: formatCompactNum(targetM.per1Pct.thinkingTokens), valClass: 'val-think' },
+                  { dot: 'dot-output', label: 'Response / 1%', value: formatCompactNum(targetM.per1Pct.responseTokens) },
+                  { dot: 'dot-total', label: 'Total / 1%', value: `${formatCompactNum(targetM.per1Pct.totalProcessedTokens)} (~${targetM.per1Pct.turns}t)`, valClass: 'val-strong' }
+                ])}
+              ` : ''}
+              ${targetM.estRemaining ? `
+                <div class="quota-subhead"><span>Model Runway (${p.remainingPct.toFixed(1)}% left)</span><span>~${formatNum(targetM.estRemaining.turns)} turns</span></div>
+                ${renderLedgerRows([
+                  { dot: 'dot-total', label: 'Est. Remaining', value: formatCompactNum(targetM.estRemaining.totalProcessedTokens), valClass: 'val-strong' },
+                  { dot: 'dot-total', label: 'Est. 100% Budget', value: `${formatCompactNum(targetM.estFull100?.totalProcessedTokens || 0)} (~${formatNum(targetM.estFull100?.turns || 0)}t)` }
+                ])}
+              ` : ''}
+            `;
+          }
+        }
+
+        // Overall Pool Burn Rate and Estimates (when corr.hasData)
+        let poolLedgerHtml = '';
+        if (corr.hasData && p1 && rem && full) {
+          poolLedgerHtml = `
+            <div class="quota-subhead"><span>Per 1% of ${winTag} Quota</span><span>(${corr.observedPct}% obs)</span></div>
+            ${renderLedgerRows([
+              { dot: 'dot-cache', label: 'Cache Read / 1%', value: formatCompactNum(p1.cacheReadTokens), valClass: 'val-cache' },
+              { dot: 'dot-input', label: 'New Input / 1%', value: formatCompactNum(p1.inputTokens) },
+              { dot: 'dot-think', label: 'Thinking / 1%', value: formatCompactNum(p1.thinkingTokens), valClass: 'val-think' },
+              { dot: 'dot-output', label: 'Response / 1%', value: formatCompactNum(p1.responseTokens) },
+              { dot: 'dot-total', label: 'Total / 1%', value: `${formatCompactNum(p1.totalProcessedTokens)} (~${p1.turns}t)`, valClass: 'val-strong' }
+            ])}
+            <div class="quota-subhead"><span>Pool Runway (${p.remainingPct.toFixed(1)}% left)</span><span>~${formatNum(rem.turns)} turns</span></div>
+            ${renderLedgerRows([
+              { dot: 'dot-total', label: 'Est. Remaining', value: formatCompactNum(rem.totalProcessedTokens), valClass: 'val-strong' },
+              { dot: 'dot-total', label: 'Est. 100% Budget', value: `${formatCompactNum(full.totalProcessedTokens)} (~${formatNum(full.turns)}t)` }
+            ])}
+          `;
+        } else {
+          const obs = corr?.observedPct || 0;
+          poolLedgerHtml = `<div class="quota-learning-note">Collecting 1% token correlation (${obs}% / 0.5% min delta observed). Use models in this pool to unlock per-1% &amp; runway estimates.</div>`;
+        }
+
+        // Model Separation list (with drill-down per model)
+        let modelsHtml = '';
+        if (modelsList.length > 0) {
+          modelsHtml = `
+            <div class="quota-subhead"><span>Model Separation (${modelsList.length})</span><span>Quota Impact</span></div>
+            ${modelsList.map(m => {
+              const mKey = `${p.poolId}:${m.model}`;
+              const isModelOpen = expandedQuotaModelNames.has(mKey);
+              const isCurrent = isFiltered && filterModel.toLowerCase() === m.model.toLowerCase();
+              return `
+                <div class="quota-model-card${isModelOpen ? ' open' : ''}${isCurrent ? ' selected' : ''}">
+                  <div class="quota-model-row" data-quota-action="toggle-model" data-model-key="${escapeHtml(mKey)}">
+                    <span class="quota-model-left">
+                      <svg class="tree-chev" width="10" height="10" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+                      <span class="routing-pill ${getModelPillClass(m.model)}">${escapeHtml(m.model)}</span>
+                    </span>
+                    <span class="quota-model-right">
+                      <span class="quota-model-share">${formatCompactNum(m.totalProcessedTokens)} · ${m.sharePct}%</span>
+                      <span class="quota-model-used">~${m.estPctUsed}%</span>
+                      <button type="button" class="quota-focus-btn" data-quota-action="focus-model" data-focus-model="${escapeHtml(m.model)}" title="Focus all metrics on this model">Focus</button>
+                    </span>
+                  </div>
+                  ${isModelOpen ? `
+                    <div class="quota-model-drilldown font-mono">
+                      ${renderLedgerRows([
+                        { dot: 'dot-cache', label: 'Cache Read', value: `${formatCompactNum(m.cacheReadTokens)} (${m.cacheEfficiencyPct}%)`, valClass: 'val-cache' },
+                        { dot: 'dot-input', label: 'New Input', value: formatCompactNum(m.inputTokens) },
+                        { dot: 'dot-think', label: 'Thinking', value: formatCompactNum(m.thinkingTokens), valClass: 'val-think' },
+                        { dot: 'dot-output', label: 'Response', value: formatCompactNum(m.responseTokens) },
+                        { dot: 'dot-total', label: 'Total Tokens', value: `${formatCompactNum(m.totalProcessedTokens)} (${m.turns}t)`, valClass: 'val-strong' }
+                      ])}
+                      ${m.per1Pct ? `
+                        <div class="quota-drill-subhead"><span>Burn / 1% Quota</span><span>~${formatCompactNum(m.per1Pct.totalProcessedTokens)} (~${m.per1Pct.turns}t)</span></div>
+                      ` : ''}
+                      ${m.estRemaining ? `
+                        <div class="quota-drill-subhead"><span>Runway (${p.remainingPct.toFixed(1)}% left)</span><span>~${formatCompactNum(m.estRemaining.totalProcessedTokens)} (~${m.estRemaining.turns}t)</span></div>
+                      ` : ''}
+                    </div>
+                  ` : ''}
+                </div>
+              `;
+            }).join('')}
+          `;
+        }
 
         detailsHtml = `
-          <div class="quota-subhead"><span>Per 1% of ${winTag} Quota</span><span>(${corr.observedPct}% obs)</span></div>
-          ${renderLedgerRows([
-            { dot: 'dot-cache', label: 'Cache Read / 1%', value: formatCompactNum(p1.cacheReadTokens), valClass: 'val-cache' },
-            { dot: 'dot-input', label: 'New Input / 1%', value: formatCompactNum(p1.inputTokens) },
-            { dot: 'dot-think', label: 'Thinking / 1%', value: formatCompactNum(p1.thinkingTokens), valClass: 'val-think' },
-            { dot: 'dot-output', label: 'Response / 1%', value: formatCompactNum(p1.responseTokens) },
-            { dot: 'dot-total', label: 'Total / 1%', value: `${formatCompactNum(p1.totalProcessedTokens)} (~${p1.turns}t)`, valClass: 'val-strong' }
-          ])}
-          <div class="quota-subhead"><span>Estimates (${p.remainingPct.toFixed(1)}% left)</span><span>~${formatNum(rem.turns)} turns</span></div>
-          ${renderLedgerRows([
-            { dot: 'dot-total', label: 'Est. Remaining', value: formatCompactNum(rem.totalProcessedTokens), valClass: 'val-strong' },
-            { dot: 'dot-total', label: 'Est. 100% Budget', value: `${formatCompactNum(full.totalProcessedTokens)} (~${formatNum(full.turns)}t)` }
-          ])}
+          ${focusedModelHtml}
+          ${focusedModelHtml ? '<div class="quota-divider"></div>' : ''}
+          ${poolLedgerHtml}
           ${modelsHtml}
         `;
       } else {
@@ -1072,11 +1169,59 @@
     });
   }
 
-  // Click any quota pool (on Session or Global tab) to expand per-1% breakdown & estimates
+  // Click any quota pool (on Session or Global tab) or model action
   [sessionQuotaPoolsList, quotaPoolsList].forEach((container) => {
     if (!container) return;
     container.addEventListener('click', (e) => {
-      e.stopPropagation();
+      // 1. Clear model focus button
+      const clearBtn = e.target.closest('[data-quota-action="clear-model"]');
+      if (clearBtn) {
+        e.stopPropagation();
+        selectedModel = 'all';
+        if (modelFilterSelect) modelFilterSelect.value = 'all';
+        if (globalUsageData) {
+          renderQuotaPoolsInto(sessionQuotaPoolsList, globalUsageData.quotaPools || [], 'all');
+          renderQuotaPoolsInto(quotaPoolsList, globalUsageData.quotaPools || [], 'all');
+        }
+        if (activeTab !== 'global' && currentTelemetry) renderDashboard(currentTelemetry);
+        return;
+      }
+
+      // 2. Focus model button
+      const focusBtn = e.target.closest('[data-quota-action="focus-model"]');
+      if (focusBtn) {
+        e.stopPropagation();
+        const fMod = focusBtn.dataset.focusModel;
+        if (fMod) {
+          selectedModel = fMod;
+          updateModelDropdown();
+          if (modelFilterSelect) modelFilterSelect.value = fMod;
+          if (globalUsageData) {
+            renderQuotaPoolsInto(sessionQuotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
+            renderQuotaPoolsInto(quotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
+          }
+          if (activeTab !== 'global' && currentTelemetry) renderDashboard(currentTelemetry);
+        }
+        return;
+      }
+
+      // 3. Toggle model drill-down
+      const toggleModel = e.target.closest('[data-quota-action="toggle-model"]');
+      if (toggleModel) {
+        e.stopPropagation();
+        const mKey = toggleModel.dataset.modelKey;
+        if (mKey) {
+          if (expandedQuotaModelNames.has(mKey)) expandedQuotaModelNames.delete(mKey);
+          else expandedQuotaModelNames.add(mKey);
+          if (globalUsageData) {
+            renderQuotaPoolsInto(sessionQuotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
+            renderQuotaPoolsInto(quotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
+          }
+        }
+        return;
+      }
+
+      // 4. Toggle entire quota pool item
       const item = e.target.closest('.quota-pool-item');
       const pid = item?.dataset?.poolId;
       if (!pid) return;

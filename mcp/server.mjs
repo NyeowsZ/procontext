@@ -8,9 +8,128 @@
 
 import readline from 'node:readline';
 import { getConversationTokenTelemetry, getModelLimits } from '../sidecars/meter/telemetry.mjs';
+import { getGlobalUsage } from '../sidecars/meter/global-store.mjs';
 
 function formatNumber(num) {
   return (num || 0).toLocaleString();
+}
+
+function formatCompactNum(num) {
+  const n = num || 0;
+  if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (Math.abs(n) >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+  return String(n);
+}
+
+function formatGap(ms) {
+  if (ms == null) return '—';
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return `${h}h ${remM}m`;
+}
+
+function formatCountdown(ms) {
+  if (ms == null || ms <= 0) return 'now';
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function makeProgressBar(usedPct, length = 10) {
+  const pct = Math.max(0, Math.min(100, usedPct || 0));
+  const filled = Math.round((pct / 100) * length);
+  return '█'.repeat(filled) + '░'.repeat(Math.max(0, length - filled));
+}
+
+function renderQuotaPoolSection(pools, filterModel = 'all') {
+  if (!pools || !pools.length) {
+    return ['_No quota pool data reported by Antigravity._'];
+  }
+
+  const isFiltered = filterModel && filterModel !== 'all';
+  let targetPools = pools;
+  if (isFiltered) {
+    const fLower = filterModel.toLowerCase();
+    const matched = pools.filter(p =>
+      (p.models || []).some(m => m.toLowerCase().includes(fLower)) ||
+      (p.correlation?.byModel || []).some(m => m.model.toLowerCase().includes(fLower))
+    );
+    if (matched.length) targetPools = matched;
+  }
+
+  const lines = [];
+  for (const p of targetPools) {
+    const winTag = p.windowType === 'weekly' ? 'Weekly' : '5h';
+    const bar = makeProgressBar(p.usedPct, 10);
+    const resetStr = p.resetTime ? `resets in ${formatCountdown(p.msUntilReset)}` : '';
+
+    lines.push(
+      `##### ${p.label} (${winTag} Pool): \`[${bar}]\` **${p.usedPct}% used** · ${p.remainingPct}% left${resetStr ? ` (${resetStr})` : ''}`
+    );
+
+    const corr = p.correlation;
+    if (corr && corr.hasData) {
+      const p1 = corr.per1Pct;
+      const rem = corr.estRemaining;
+      const full = corr.estFull100;
+      lines.push(
+        `- **Pool Burn Rate / 1%:** ~${formatNumber(p1.totalProcessedTokens)} tokens (~${p1.turns} turns) · _${formatNumber(p1.inputTokens)} in, ${formatNumber(p1.cacheReadTokens)} cache, ${formatNumber(p1.thinkingTokens)} think, ${formatNumber(p1.responseTokens)} resp_`,
+        `- **Remaining Runway (${p.remainingPct}% left):** ~${formatNumber(rem.totalProcessedTokens)} tokens (~${formatNumber(rem.turns)} turns) | **Est. 100% Budget:** ~${formatNumber(full.totalProcessedTokens)} tokens`
+      );
+    } else {
+      const obs = corr?.observedPct || 0;
+      lines.push(`- _Collecting 1% correlation (${obs}% / 0.5% min delta observed). Use models in this pool to unlock per-1% burn rate & runway estimates._`);
+    }
+
+    const modelsList = corr?.byModel || [];
+    if (modelsList.length > 0) {
+      if (isFiltered) {
+        const fLower = filterModel.toLowerCase();
+        const m = modelsList.find(item => item.model.toLowerCase().includes(fLower));
+        if (m) {
+          lines.push(
+            ``,
+            `  **Model Separation for \`${m.model}\`:**`,
+            `  - **Ingested:** ${formatNumber(m.inputTokens)} new input + ${formatNumber(m.cacheReadTokens)} cache reads (${m.cacheEfficiencyPct}% cached)`,
+            `  - **Generated:** ${formatNumber(m.thinkingTokens)} thinking + ${formatNumber(m.responseTokens)} response (${formatNumber(m.totalProcessedTokens)} total across ${m.turns} turns)`,
+            `  - **Quota Impact:** Consumed ~**${m.estPctUsed}%** of the ${winTag} quota (**${m.sharePct}%** of all pool tokens)`
+          );
+          if (m.per1Pct) {
+            lines.push(
+              `  - **Model Burn / 1%:** ~${formatNumber(m.per1Pct.totalProcessedTokens)} tokens / 1% (~${m.per1Pct.turns}t) · _${formatNumber(m.per1Pct.inputTokens)} in, ${formatNumber(m.per1Pct.cacheReadTokens)} cache, ${formatNumber(m.per1Pct.thinkingTokens)} think, ${formatNumber(m.per1Pct.responseTokens)} resp_`
+            );
+          }
+          if (m.estRemaining) {
+            lines.push(
+              `  - **Model Runway Estimate:** ~${formatNumber(m.estRemaining.totalProcessedTokens)} tokens (~${formatNumber(m.estRemaining.turns)} turns) remaining at current share`
+            );
+          }
+        }
+      } else {
+        lines.push(
+          ``,
+          `  | Model | Input | Cache Read | Thinking | Response | Total | Quota % | Share % | Burn/1% | Runway Est |`,
+          `  | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |`
+        );
+        for (const m of modelsList) {
+          const burnStr = m.per1Pct ? `~${formatCompactNum(m.per1Pct.totalProcessedTokens)}` : '—';
+          const remStr = m.estRemaining ? `~${formatCompactNum(m.estRemaining.totalProcessedTokens)}` : '—';
+          lines.push(
+            `  | **${m.model}** | ${formatCompactNum(m.inputTokens)} | ${formatCompactNum(m.cacheReadTokens)} (${m.cacheEfficiencyPct}%) | ${formatCompactNum(m.thinkingTokens)} | ${formatCompactNum(m.responseTokens)} | ${formatCompactNum(m.totalProcessedTokens)} (${m.turns}t) | ~${m.estPctUsed}% | ${m.sharePct}% | ${burnStr} | ${remStr} |`
+          );
+        }
+      }
+    }
+    lines.push(``);
+  }
+  return lines;
 }
 
 function sendResponse(id, result) {
@@ -34,13 +153,30 @@ function sendError(id, code, message) {
 const TOOLS = [
   {
     name: 'get_token_context',
-    description: 'Get exact server-side token usage and live context window consumption matching Antigravity CLI /context. Shows active context tokens vs model limit, remaining capacity, latest turn input/cache/thinking/output breakdown, and cumulative session totals.',
+    description: 'Get exact server-side token usage, live context window consumption, active account & 5h/weekly quota status with model separation, cross-chat cache lifespan, and session totals. Matches Antigravity CLI /context.',
     inputSchema: {
       type: 'object',
       properties: {
         conversation_id: {
           type: 'string',
           description: 'Optional conversation ID or cascadeId. Defaults to the active conversation.'
+        },
+        model: {
+          type: 'string',
+          description: 'Optional model filter (e.g. "all", "Claude Opus 5.5", "Gemini 4 Neon"). Defaults to "all". When specified, isolates quota correlation, burn rate, and token metrics to that model.'
+        }
+      }
+    }
+  },
+  {
+    name: 'get_quota_status',
+    description: 'Get live Antigravity account status, 5-hour and Weekly quota pools, per-1% token burn rates, runway estimates, and per-model consumption breakdown (all models or separated by model).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        model: {
+          type: 'string',
+          description: 'Optional model filter (e.g. "all", "Claude 3.5 Sonnet", "Gemini 4 Neon"). Defaults to "all". When specified, isolates quota correlation and estimates for that specific model.'
         }
       }
     }
@@ -70,13 +206,59 @@ const TOOLS = [
 ];
 
 async function handleToolCall(name, args) {
-  const telemetry = await getConversationTokenTelemetry(args?.conversation_id);
+  const modelFilter = (args?.model || 'all').trim();
+
+  if (name === 'get_quota_status') {
+    const globalUsage = await getGlobalUsage().catch(() => null);
+    if (!globalUsage) {
+      return {
+        content: [{ type: 'text', text: '⚠️ Unable to retrieve Antigravity account quota data.' }]
+      };
+    }
+
+    const acct = globalUsage.account || {};
+    const output = [
+      `### ⏱️ Antigravity Account & Quotas`,
+      `- **Active Account:** **${acct.name || 'User'}** (\`${acct.email || 'local'}\` · **${acct.planName || 'Standard'}** Plan)`,
+      `- **Active Conversations:** ${globalUsage.conversationCount || 0} tracked (${globalUsage.pendingCount || 0} indexing)`,
+      ``,
+      `#### 📊 Live Quota Pools & Burn Rates (${modelFilter === 'all' ? 'All Models' : `Filtered to \`${modelFilter}\``}):`
+    ];
+
+    output.push(...renderQuotaPoolSection(globalUsage.quotaPools, modelFilter));
+
+    if (globalUsage.snapshots?.length) {
+      const recentSnaps = globalUsage.snapshots.slice(0, 5);
+      output.push(
+        `#### 📸 Recent Quota Snapshots (100% Cycles & Baselines):`,
+        `| Name | Type | Turns | Total Processed | Created At |`,
+        `| :--- | :--- | :--- | :--- | :--- |`
+      );
+      for (const s of recentSnaps) {
+        const typeTag = s.auto ? (s.windowType === 'weekly' ? 'Auto Weekly' : 'Auto 5h') : 'Manual';
+        output.push(
+          `| ${s.name} | ${typeTag} | ${s.totals?.totalTurns || 0}t | ${formatCompactNum(s.totals?.totalProcessedTokens)} | ${s.createdAt ? s.createdAt.slice(0, 16).replace('T', ' ') : '—'} |`
+        );
+      }
+    }
+
+    return {
+      content: [{ type: 'text', text: output.join('\n') }]
+    };
+  }
+
+  const [telemetry, globalUsage] = await Promise.all([
+    getConversationTokenTelemetry(args?.conversation_id),
+    getGlobalUsage().catch(() => null)
+  ]);
+
   const ctx = telemetry.liveContext;
   const latest = telemetry.latestTurn;
   const cum = telemetry.cumulative;
   const model = telemetry.activeModel;
 
   if (name === 'get_token_context') {
+    const acct = globalUsage?.account || telemetry.account || {};
     let output = [
       `### 📊 Live Context Window & Token Meter`,
       `- **Active Model:** ${latest?.modelDisplayName || model.displayName}${telemetry.isMultiModel ? ` (${telemetry.sessionModelsSummary})` : ''}`,
@@ -102,6 +284,43 @@ async function handleToolCall(name, args) {
       );
     }
 
+    // Cache Lifespan & Survival Bounds (Cross-Chat Persisted)
+    if (telemetry.cacheLifespan) {
+      const cls = telemetry.cacheLifespan;
+      const lastAgoMs = cls.lastChatCompletedAtMs ? Math.max(0, Date.now() - cls.lastChatCompletedAtMs) : null;
+      output.push(
+        ``,
+        `#### ⚡ Cache Lifespan & Survival Bounds (Cross-Chat Persisted):`,
+        `- **Warm Model:** ${cls.warmModelDisplayName} (${cls.lastTurnHadCache ? 'Warm Cache Hit' : 'Cold Cache Miss'})`,
+        `- **Last Chat:** ${lastAgoMs !== null ? `${formatGap(lastAgoMs)} ago` : 'Active conversation'}`
+      );
+
+      const byModelEntries = Object.entries(cls.byModel || {});
+      if (byModelEntries.length > 0) {
+        output.push(`- **Learned Model Bounds:**`);
+        for (const [mName, b] of byModelEntries) {
+          let desc = 'No lifespan data yet';
+          if (b.status === 'bracketed') {
+            desc = `${formatGap(b.maxWarmGapMs)} – ${formatGap(b.minColdGapMs)} (est. ~${formatGap(b.estimatedTtlMs)})`;
+          } else if (b.status === 'lower_bound') {
+            desc = `≥ ${formatGap(b.maxWarmGapMs)} (${b.sampleCount} sample${b.sampleCount === 1 ? '' : 's'}${b.isPersisted ? ' across chats' : ''})`;
+          } else if (b.status === 'upper_bound') {
+            desc = `≤ ${formatGap(b.minColdGapMs)} (${b.sampleCount} sample${b.sampleCount === 1 ? '' : 's'})`;
+          }
+          output.push(`  - **${mName}:** ${desc}`);
+        }
+      }
+    }
+
+    // Account & Quota Pools Section (with Model Separation)
+    if (globalUsage && globalUsage.quotaPools?.length) {
+      output.push(
+        ``,
+        `#### ⏱️ Account & Quota Pools (${acct.name || 'User'} · ${acct.planName || 'Pro'} · \`${acct.email || 'local'}\`):`
+      );
+      output.push(...renderQuotaPoolSection(globalUsage.quotaPools, modelFilter));
+    }
+
     output.push(
       ``,
       `#### Session Cumulative (${cum.totalTurns} turns):`,
@@ -110,6 +329,12 @@ async function handleToolCall(name, args) {
       `- **Total Processed:** ${formatNumber(cum.totalProcessedTokens)} tokens`,
       `- **Overall Cache Savings:** ${cum.overallCacheSavingsPct}% cache hit rate`
     );
+
+    if (telemetry.toolCalls?.totalCalls > 0) {
+      const tc = telemetry.toolCalls;
+      const top3 = (tc.tools || []).slice(0, 3).map(t => `${t.name} (${t.count})`).join(', ');
+      output.push(`- **Tool Calls:** ${formatNumber(tc.totalCalls)} calls across ${tc.tools?.length || 0} tools${top3 ? ` (top: ${top3})` : ''}`);
+    }
 
     return {
       content: [

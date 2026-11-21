@@ -1491,3 +1491,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
   to { opacity: 1; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) { .delta-pill { animation: none; } }
+
+/* Active Turn: expanded hides the summary; Cache Read row is green */
+#secActiveTurn:not(.compact) .section-summary-right { display: none; }
+#secActiveTurn #turnCacheReadVal,
+#secActiveTurn #turnCachePct,
+#secActiveTurn #turnCacheReadVal + .cat-pct { color: var(--tm-cache); font-weight: 600; }
+#secActiveTurn .cat-row:has(#turnCacheReadVal) .cat-label { color: var(--tm-cache); }

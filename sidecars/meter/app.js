@@ -122,6 +122,11 @@
   const viewPromptBtn = document.getElementById('viewPromptBtn');
   const viewStepBtn = document.getElementById('viewStepBtn');
   const telemetryList = document.getElementById('telemetryList');
+  const telemetryPagination = document.getElementById('telemetryPagination');
+  const telemetryPaginationInfo = document.getElementById('telemetryPaginationInfo');
+  const telemetryPaginationPages = document.getElementById('telemetryPaginationPages');
+  const telemetryPagePrev = document.getElementById('telemetryPagePrev');
+  const telemetryPageNext = document.getElementById('telemetryPageNext');
 
   const contextPctValue = document.getElementById('contextPctValue');
   const healthBadge = document.getElementById('healthBadge');
@@ -979,7 +984,11 @@
     }
   }
 
-  // ---------- Telemetry List Rendering ----------
+  // ---------- Telemetry List Rendering & Pagination ----------
+  const TELEMETRY_PAGE_SIZE = 15;
+  let telemetryPromptPage = 1;
+  let telemetryStepPage = 1;
+
   function updateToggleButtons() {
     if (viewPromptBtn && viewStepBtn) {
       viewPromptBtn.classList.toggle('active', activeView === 'prompt');
@@ -987,23 +996,98 @@
     }
   }
 
+  function renderTelemetryPagination(totalItems, currentPage, onPageSelect) {
+    if (!telemetryPagination) return;
+    const totalPages = Math.ceil(totalItems / TELEMETRY_PAGE_SIZE) || 1;
+    if (totalPages <= 1) {
+      telemetryPagination.classList.add('hidden');
+      return;
+    }
+    telemetryPagination.classList.remove('hidden');
+
+    const startIdx = (currentPage - 1) * TELEMETRY_PAGE_SIZE + 1;
+    const endIdx = Math.min(totalItems, currentPage * TELEMETRY_PAGE_SIZE);
+    if (telemetryPaginationInfo) {
+      telemetryPaginationInfo.textContent = `${startIdx}–${endIdx} of ${totalItems} (Pg ${currentPage}/${totalPages})`;
+    }
+
+    if (telemetryPagePrev) {
+      telemetryPagePrev.disabled = currentPage <= 1;
+      telemetryPagePrev.onclick = () => onPageSelect(currentPage - 1);
+    }
+    if (telemetryPageNext) {
+      telemetryPageNext.disabled = currentPage >= totalPages;
+      telemetryPageNext.onclick = () => onPageSelect(currentPage + 1);
+    }
+
+    if (telemetryPaginationPages) {
+      // Build compact page numbers with ellipsis (e.g. 1, 2, ..., 5)
+      const pages = [];
+      for (let p = 1; p <= totalPages; p++) {
+        if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1) {
+          pages.push(p);
+        } else if (pages[pages.length - 1] !== '...') {
+          pages.push('...');
+        }
+      }
+
+      telemetryPaginationPages.innerHTML = pages.map(p => {
+        if (p === '...') {
+          return `<span class="pagination-ellipsis">…</span>`;
+        }
+        const isActive = p === currentPage;
+        return `<button type="button" class="pagination-page-btn${isActive ? ' active' : ''}" data-page="${p}">${p}</button>`;
+      }).join('');
+
+      telemetryPaginationPages.querySelectorAll('.pagination-page-btn').forEach(btn => {
+        btn.onclick = () => onPageSelect(parseInt(btn.dataset.page, 10));
+      });
+    }
+  }
+
   function renderTelemetryList() {
     if (!currentTelemetry || !telemetryList) return;
 
     if (activeView === 'prompt') {
-      let prompts = currentTelemetry.recentPrompts || currentTelemetry.prompts || [];
+      let prompts = currentTelemetry.prompts || currentTelemetry.recentPrompts || [];
+      // reverse-chronological so latest is first
+      const fullList = [...prompts].reverse();
+      let filtered = fullList;
       if (selectedModel !== 'all') {
-        prompts = prompts.filter(p => (p.modelsUsed || []).includes(selectedModel));
+        filtered = fullList.filter(p => (p.modelsUsed || []).includes(selectedModel));
       }
-      if (telemetryCompactVal) telemetryCompactVal.textContent = `· ${prompts.length} prompt${prompts.length === 1 ? '' : 's'}`;
-      renderPromptList(prompts);
+      if (telemetryCompactVal) telemetryCompactVal.textContent = `· ${filtered.length} prompt${filtered.length === 1 ? '' : 's'}`;
+
+      const totalPages = Math.ceil(filtered.length / TELEMETRY_PAGE_SIZE) || 1;
+      if (telemetryPromptPage > totalPages) telemetryPromptPage = totalPages;
+      if (telemetryPromptPage < 1) telemetryPromptPage = 1;
+
+      const pagedItems = filtered.slice((telemetryPromptPage - 1) * TELEMETRY_PAGE_SIZE, telemetryPromptPage * TELEMETRY_PAGE_SIZE);
+      renderPromptList(pagedItems, fullList[0]?.promptNumber);
+      renderTelemetryPagination(filtered.length, telemetryPromptPage, (newPage) => {
+        telemetryPromptPage = newPage;
+        renderTelemetryList();
+      });
     } else {
-      let turns = currentTelemetry.recentTurns || currentTelemetry.turns || [];
+      let turns = currentTelemetry.turns || currentTelemetry.recentTurns || [];
+      // reverse-chronological so latest turn is first
+      const fullList = [...turns].reverse();
+      let filtered = fullList;
       if (selectedModel !== 'all') {
-        turns = turns.filter(t => t.modelDisplayName === selectedModel);
+        filtered = fullList.filter(t => t.modelDisplayName === selectedModel);
       }
-      if (telemetryCompactVal) telemetryCompactVal.textContent = `· ${turns.length} step${turns.length === 1 ? '' : 's'}`;
-      renderStepList(turns);
+      if (telemetryCompactVal) telemetryCompactVal.textContent = `· ${filtered.length} step${filtered.length === 1 ? '' : 's'}`;
+
+      const totalPages = Math.ceil(filtered.length / TELEMETRY_PAGE_SIZE) || 1;
+      if (telemetryStepPage > totalPages) telemetryStepPage = totalPages;
+      if (telemetryStepPage < 1) telemetryStepPage = 1;
+
+      const pagedItems = filtered.slice((telemetryStepPage - 1) * TELEMETRY_PAGE_SIZE, telemetryStepPage * TELEMETRY_PAGE_SIZE);
+      renderStepList(pagedItems);
+      renderTelemetryPagination(filtered.length, telemetryStepPage, (newPage) => {
+        telemetryStepPage = newPage;
+        renderTelemetryList();
+      });
     }
   }
 
@@ -1024,13 +1108,11 @@
     `).join('')}</div>`;
   }
 
-  function renderPromptList(prompts) {
+  function renderPromptList(prompts, latestPromptNum) {
     if (!prompts || prompts.length === 0) {
       telemetryList.innerHTML = `<div class="empty-state font-mono">No prompt records yet</div>`;
       return;
     }
-
-    const latestPromptNum = prompts[0]?.promptNumber;
 
     telemetryList.innerHTML = prompts.map(p => {
       const isLatest = p.promptNumber === latestPromptNum;
@@ -1089,7 +1171,7 @@
       return;
     }
 
-    telemetryList.innerHTML = turns.map(t => {
+    telemetryList.innerHTML = turns.map((t, i) => {
       const stepRange = formatStepRange(t.stepIndices);
       const modelLabel = t.modelShortName || t.modelDisplayName || 'Flash';
       const modelFullName = t.modelDisplayName || t.modelId || 'Unknown Model';
@@ -1097,6 +1179,28 @@
       const key = itemKey('step', t.turnNumber);
       const isCompact = isItemCompact(key);
       const showAnyField = telemetryFields.chat || telemetryFields.model || telemetryFields.cache;
+
+      // Grouping bracket logic: check adjacent turns in the list (turns is reverse-chronological)
+      const curPrompt = t.promptNumber;
+      const prevInList = i > 0 ? turns[i - 1] : null; // higher turnNumber
+      const nextInList = i < turns.length - 1 ? turns[i + 1] : null; // lower turnNumber
+
+      const hasPrevSame = curPrompt != null && prevInList && prevInList.promptNumber === curPrompt;
+      const hasNextSame = curPrompt != null && nextInList && nextInList.promptNumber === curPrompt;
+
+      let groupClass = '';
+      let bracketHtml = '';
+      if (hasPrevSame || hasNextSame) {
+        groupClass = ' grouped-step';
+        let posClass = 'group-pos-middle';
+        if (!hasPrevSame && hasNextSame) {
+          posClass = 'group-pos-last'; // top turn in prompt group
+        } else if (hasPrevSame && !hasNextSame) {
+          posClass = 'group-pos-first'; // bottom turn in prompt group
+        }
+        groupClass += ` ${posClass}`;
+        bracketHtml = `<span class="step-group-bracket" aria-hidden="true" title="Part of prompt ${curPrompt}"></span>`;
+      }
 
       const stepCacheLine = formatCacheStatusLine(t.gapSincePrevTurnMs, t.cacheStatus, modelLabel, t.prevModelShortName);
       const stepCacheDot = (t.cacheStatus === 'warm_hit' || t.cacheStatus === 'cross_model_hit') ? 'dot-cache' : 'dot-total';
@@ -1110,7 +1214,8 @@
       ]);
 
       return `
-        <div class="telemetry-item${isCompact ? ' compact' : ''}" data-key="${escapeHtml(key)}" role="button" tabindex="0" aria-expanded="${!isCompact}" title="Click to ${isCompact ? 'expand' : 'compact'}">
+        <div class="telemetry-item${groupClass}${isCompact ? ' compact' : ''}" data-key="${escapeHtml(key)}" role="button" tabindex="0" aria-expanded="${!isCompact}" title="Click to ${isCompact ? 'expand' : 'compact'}">
+          ${bracketHtml}
           <div class="item-top-row">
             <div class="item-title">
               <span class="num-capsule" title="Turn ${t.turnNumber}">${t.turnNumber}</span>

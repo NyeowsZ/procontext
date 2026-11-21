@@ -646,6 +646,8 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
         break;
       }
     }
+    const assignedPromptNumber = promptGroups[targetPromptIdx].promptNumber;
+    turnItem.promptNumber = assignedPromptNumber;
     promptGroups[targetPromptIdx].turns.push(turnItem);
   });
 

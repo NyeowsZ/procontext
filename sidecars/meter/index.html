@@ -278,6 +278,23 @@
             <div class="telemetry-list font-mono" id="telemetryList">
               <div class="empty-state font-mono">Loading telemetry records...</div>
             </div>
+            <!-- Telemetry Pagination Bar -->
+            <div class="telemetry-pagination font-mono hidden" id="telemetryPagination">
+              <div class="pagination-info" id="telemetryPaginationInfo">Page 1 of 1</div>
+              <div class="pagination-controls">
+                <button type="button" class="pagination-btn" id="telemetryPagePrev" title="Previous page" aria-label="Previous page">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10 3.5 5.5 8 10 12.5"/>
+                  </svg>
+                </button>
+                <div class="pagination-pages" id="telemetryPaginationPages"></div>
+                <button type="button" class="pagination-btn" id="telemetryPageNext" title="Next page" aria-label="Next page">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M6 3.5 10.5 8 6 12.5"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 

@@ -1141,6 +1141,149 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .calls-count, .step-indices { font-size: 12px; color: var(--cx-fg-muted); flex-shrink: 0; }
 
+/* Telemetry Pagination Bar */
+.telemetry-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 4px 4px 4px;
+  margin-top: 4px;
+  border-top: 1px solid var(--cx-border);
+  font-size: 11px;
+}
+.telemetry-pagination.hidden { display: none; }
+.pagination-info {
+  color: var(--cx-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid var(--cx-border);
+  background: var(--cx-fill);
+  color: var(--cx-fg-2);
+  cursor: pointer;
+  transition: background-color 140ms var(--ease-out), color 140ms var(--ease-out), border-color 140ms var(--ease-out);
+}
+.pagination-btn:hover:not(:disabled) {
+  background: var(--cx-hover);
+  color: var(--cx-fg);
+  border-color: var(--cx-border-strong);
+}
+.pagination-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.pagination-pages {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.pagination-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--cx-fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: all 140ms var(--ease-out);
+}
+.pagination-page-btn:hover {
+  background: var(--cx-hover);
+  color: var(--cx-fg);
+}
+.pagination-page-btn.active {
+  background: var(--cx-surface);
+  color: var(--cx-fg);
+  border-color: var(--cx-border);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.pagination-ellipsis {
+  padding: 0 2px;
+  color: var(--cx-fg-muted);
+  font-size: 11px;
+  user-select: none;
+}
+
+/* Subtle prompt grouping tree bracket in By Step view */
+.telemetry-item.grouped-step {
+  position: relative;
+  padding-left: 20px;
+}
+.step-group-bracket {
+  position: absolute;
+  left: 6px;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  pointer-events: none;
+}
+.step-group-bracket::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  width: 1px;
+  background-color: var(--cx-border-strong, rgba(255, 255, 255, 0.16));
+}
+.step-group-bracket::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  width: 6px;
+  height: 1px;
+  background-color: var(--cx-border-strong, rgba(255, 255, 255, 0.16));
+}
+
+/* Bracket segment variations based on position inside prompt */
+/* First step in multi-step prompt (bottom of bracket in reverse-chronological list) */
+.telemetry-item.group-pos-first .step-group-bracket::before {
+  top: 0;
+  bottom: 50%;
+}
+.telemetry-item.group-pos-first .step-group-bracket::after {
+  bottom: 50%;
+  border-bottom-left-radius: 2px;
+}
+
+/* Last step in multi-step prompt (top of bracket in reverse-chronological list) */
+.telemetry-item.group-pos-last .step-group-bracket::before {
+  top: 50%;
+  bottom: 0;
+}
+.telemetry-item.group-pos-last .step-group-bracket::after {
+  top: 50%;
+  border-top-left-radius: 2px;
+}
+
+/* Middle steps */
+.telemetry-item.group-pos-middle .step-group-bracket::before {
+  top: 0;
+  bottom: 0;
+}
+.telemetry-item.group-pos-middle .step-group-bracket::after {
+  display: none;
+}
+
 .item-cache-badge {
   flex-shrink: 0;
   padding: 1px 6px;

@@ -675,8 +675,8 @@
     cacheLifespanStat.classList.remove('warm', 'expiring', 'cold');
 
     if (!stat || stat.status === 'no_data') {
-      cacheLifespanStat.textContent = 'No lifespan data yet';
-      cacheLifespanStrip.title = 'Waiting for same-model chat-to-chat gaps ≥ 30s (ignores short bursts & tool loops)';
+      cacheLifespanStat.textContent = '—';
+      cacheLifespanStat.title = 'No lifespan data yet. Waiting for same-model chat-to-chat gaps of 30s or more (ignores short bursts and tool loops).';
       return;
     }
 
@@ -685,24 +685,24 @@
     if (stat.minColdGapMs != null) parts.push(`Min cold gap: ${formatDurationShort(stat.minColdGapMs)}`);
     parts.push(`Chat-to-chat samples (≥30s): ${stat.sampleCount}`);
     if (stat.isPersisted) parts.push('Storage: Learned across chats (persisted in account store)');
-    cacheLifespanStrip.title = parts.join('\n');
+    cacheLifespanStat.title = parts.join('\n');
 
     const sampleTag = stat.isPersisted ? `${stat.sampleCount} across chats` : `${stat.sampleCount}`;
 
     if (stat.status === 'bracketed') {
-      cacheLifespanStat.textContent = `TTL ~${formatDurationShort(stat.maxWarmGapMs)}–${formatDurationShort(stat.minColdGapMs)} (${sampleTag})`;
+      cacheLifespanStat.textContent = `~${formatDurationShort(stat.maxWarmGapMs)}–${formatDurationShort(stat.minColdGapMs)}`;
       if (elapsedMs != null) {
         if (elapsedMs >= stat.minColdGapMs) cacheLifespanStat.classList.add('cold');
         else if (elapsedMs >= stat.maxWarmGapMs) cacheLifespanStat.classList.add('expiring');
         else cacheLifespanStat.classList.add('warm');
       }
     } else if (stat.status === 'lower_bound') {
-      cacheLifespanStat.textContent = `TTL ≥ ${formatDurationShort(stat.maxWarmGapMs)} (${sampleTag})`;
+      cacheLifespanStat.textContent = `≥ ${formatDurationShort(stat.maxWarmGapMs)}`;
       if (elapsedMs != null && elapsedMs <= stat.maxWarmGapMs) {
         cacheLifespanStat.classList.add('warm');
       }
     } else if (stat.status === 'upper_bound') {
-      cacheLifespanStat.textContent = `TTL < ${formatDurationShort(stat.minColdGapMs)} (${sampleTag})`;
+      cacheLifespanStat.textContent = `< ${formatDurationShort(stat.minColdGapMs)}`;
       if (elapsedMs != null && elapsedMs >= stat.minColdGapMs) {
         cacheLifespanStat.classList.add('cold');
       }

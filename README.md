@@ -1,87 +1,117 @@
-# Token & Context Meter
+# Procontext
 
-A high-precision telemetry and context window meter plugin for Google Antigravity Desktop.
+**Procontext** is a server-side token telemetry, prompt cache TTL tracker, and 5-hour / weekly quota correlation plugin for **Google Antigravity Desktop**.
 
-It connects directly to the local language server RPC endpoint to deliver exact, server-side token accounting and live context window consumption for active conversations without client-side text tokenizer approximations.
+It connects directly to Antigravity's local language server RPC endpoint to deliver exact, zero-approximation token accounting, learned prompt cache survival bounds, and empirical per-1% quota burn rates across active chats and subagents.
 
----
-
-## Overview
-
-Most token meters approximate token counts by running character heuristics or client-side tokenizers (such as `tiktoken`) against visible chat text. These approximations fail to capture:
-
-- Hidden internal reasoning and thinking tokens
-- System prompts and model developer instructions
-- Tool invocation schemas, arguments, and return payloads
-- Exact prompt cache reuse boundaries and cache hit ratios
-- Dynamic context compaction and checkpointing events
-
-Token & Context Meter eliminates guesswork by querying Antigravity Desktop's running local language server directly over Connect RPC, providing ground-truth telemetry identical to the CLI `/context` command.
+> **Fork Attribution**: Forked from [BlueNebula-Dev/token-context-meter](https://github.com/BlueNebula-Dev/token-context-meter) and expanded with the **Coding HUD**, **Simple / Full view modes**, **cross-chat Cache TTL survival learning**, **5h & Weekly Quota Pool correlation + runway estimation**, **3-level Tool Call & Context Compaction drill-downs**, **Subagent inspection**, and **per-account Global Usage snapshots**.
 
 ---
 
-## Key Metrics
+## Visual Preview
 
-### Live Context Window
-- **Active Tokens**: Exact token volume currently occupying the context window.
-- **Limit & Capacity**: Active model ceiling (for example, 1,048,576 tokens) with percentage consumption.
-- **Headroom**: Remaining token headroom before reaching compaction or context window exhaustion.
+| Coding HUD (Default) | Simple Mode |
+| :---: | :---: |
+| ![Procontext Coding HUD](assets/screenshots/coding-hud.png) | ![Procontext Simple Mode](assets/screenshots/simple-mode.png) |
+| **2×2 sparkline KPI cards + 4-cell coding stat strip** | **Essential metrics + latest 5 compact telemetry rows** |
 
-### Per-Turn Breakdown
-- **New Input Tokens**: Fresh prompt tokens ingested during the turn.
-- **Cache Read Tokens**: Pre-cached tokens served from prompt cache, alongside the cache efficiency percentage.
-- **Generation Output**: Split into internal reasoning/thinking tokens and final response or tool call tokens.
-
-### Model Routing
-- **Routed Model Identification**: Displays the exact model assigned per turn (for example, Gemini 3.8 Flash High, Gemini Pro, Argon).
-- **Multi-Model Session Tracking**: Flags multi-model conversations and displays routing paths across steps.
-
-### Cumulative Session Totals
-- **Processed Volume**: Cumulative sum of all input, cache read, output, and reasoning tokens across the entire session.
-- **Overall Re-use Rate**: Aggregate prompt caching efficiency.
-- **Compaction Detection**: Tracks checkpointing events when earlier turns are summarized to reclaim context space.
+| Full Mode (Session Ledger) | Global Usage & Quota Correlation |
+| :---: | :---: |
+| ![Procontext Full Mode](assets/screenshots/full-mode.png) | ![Procontext Global & Quotas](assets/screenshots/global-quotas.png) |
+| **Full turn breakdown, compaction checkpoints & tool trees** | **Per-1% quota token burn, pool runway & all-time ledger** |
 
 ---
 
-## User Interface
+## Why Procontext?
 
-The sidecar user interface matches the aesthetic of the Antigravity `context` panel:
+Client-side token meters approximate token volume by running character heuristics or local tokenizers (`tiktoken`) against visible chat text. Those estimates miss:
 
-- **Host Theme Tokens**: Inherits Antigravity's theme variables (`--background`, `--foreground`, `--border`, etc.), defaulting to a near-black surface (`#131417`) and automatically switching to a light palette when the host theme is light.
-- **Typography**: Google Sans Flex with tabular figures (`tabular-nums`) to prevent layout shift during live updates.
-- **Window Utilization Header**: Compact `X% used` headline with an 8px rounded capacity bar (optimal, moderate, critical thresholds) and active/remaining token figures.
-- **Active Turn Ledger**: Hierarchical breakdown of prompt inputs and generation outputs with colored category swatches (cache, input, thinking, output).
-- **Pills & Segmented Controls**: Soft tinted pills for cache %, model routing, and multi-model badges; segmented `By Prompt | By Step` toggle; subtle row hover states.
-- **Session Totals**: High-level processed volume and cumulative cache reuse rates.
-- **Telemetry Section with Dual Views**:
-  - **By Prompt**: Aggregates internal tool loops and model calls between user message boundaries. Shows sequential prompt numbers, preview text, internal call count, model routing chain, token sums, and ending context window consumption.
-  - **By Step**: Granular per-step ledger showing individual LLM calls, step indices, routed model badges, input/cache/thinking breakdowns, and turn totals.
-- **Actions**:
-  - Live pulse indicator reflecting 2.5-second polling intervals.
-  - Quick-copy `/context` button that places a clean Markdown summary on the clipboard.
-  - Manual telemetry refresh trigger.
+- Internal reasoning and thinking tokens (`thinkingTokens`)
+- System prompts, developer instructions, and injected rules/skills
+- Tool invocation schemas, arguments, and file/command return payloads
+- Prompt cache reuse boundaries, cross-chat cache survival windows (TTL), and cache hit ratios
+- Context compaction (`/compact`) checkpoints and reclaimed token deltas
+- Shared 5-hour and weekly quota pool consumption across model families
+
+**Procontext** queries the running Antigravity language server over Connect RPC (`GetCascadeTrajectory`, `GetUserStatus`, `GetCommandModelConfigs`), matching the exact server-side figures reported by the CLI `/context` command while persisting long-term cache and quota analytics locally.
+
+---
+
+## Display Modes
+
+Switch modes at any time using the quick header pill (`HUD` → `Full` → `Simple`) or via the **`⋮`** main settings menu.
+
+### 1. Coding HUD (`HUD` — Default)
+Designed for low cognitive load while actively coding:
+- **Subtle Running Model Strip**: Brand-colored dot (`Gemini`, `Claude`, `GPT`, `Argon`), active model name, and current turn number.
+- **2×2 Primary Sparkline KPI Grid**:
+  1. **Cache TTL**: Live countdown (`3m 44s`), cache state (`Warm` / `Expiring` / `Cold`), learned survival window (`~4m 33s–6m 26s`), and smooth S-curve decay gauge.
+  2. **Cache Hit Rate**: Latest turn cache hit percentage, turn-over-turn delta, warm `min · avg` (automatically filtering out turn #1 cold starts and `/compact` prefix rewrites), and area sparkline.
+  3. **Context Window**: Active context displayed in thousands (`98.3K`), per-turn delta (`+0.4K`), ceiling & free headroom (`of 1.05M · 950K free`), and a minimal un-pilled `_>` trigger to set a custom `K` compact threshold line on the sparkline.
+  4. **Quota Left**: Strictly matches the active model's primary quota pool (5-hour or weekly), displaying remaining percentage (`71.2%`), pool window badge (`Weekly` / `5h pool` / `Wk %`), and reset countdown (`Resets 6d 22h`).
+- **4-Cell Secondary Compact Strip**:
+  - **Turn duration**: Latest turn duration + `avg · max`.
+  - **New input / turn**: Fresh un-cached tokens + `min · avg`.
+  - **Output / turn**: Generated output tokens + `think · avg`.
+  - **Tool calls**: Total session tool invocations + unique tool count and calls/turn average.
+
+### 2. Simple Mode (`Simple`)
+Streamlined vertical dashboard for quick scanning:
+- Shows **Window Utilization**, **Account & Quotas**, **Active Turn** (without meta rows), auto-compacted **Generation Output** and **Session Totals**, and the **latest 5 telemetry items** in single-line compact format.
+
+### 3. Full Mode (`Full`)
+Complete analytical breakdown for deep inspection:
+- **Window Utilization & Context Compaction**: Capacity bar with subtle `_>` compact threshold tick, active model & multi-model badges, and an expandable **Context Compacted** `.cat-list` drill-down showing every compaction checkpoint (`Turn #N`, `before → after`, tokens saved, and `%` reduction).
+- **Account & Quotas (5-Hour & Weekly Pools)**:
+  - Groups pools by **5-Hour Window** (`Claude / GPT-OSS`, `Gemini · Hydrogen / Neon`) and **Weekly Window** (`Gemini · Argon`) with brand-colored family pills.
+  - Expand any pool to inspect **Per 1% of Quota** empirical token burn (`Cache Read / 1%`, `New Input / 1%`, `Thinking / 1%`, `Response / 1%`, `Total / 1%`), **Pool Runway** (`~N turns`, estimated remaining token budget, estimated 100% pool budget), and **Model Separation** (color-coded per-model share with expandable token breakdown and one-click `Focus` filter).
+- **Active Turn & Live Cache Lifespan Strip**:
+  - Prompt token breakdown (`Cache Read` vs `New Input`) with live `+N` delta pills on updates.
+  - Live 1-second ticker for `Last Chat`, `Cache Model`, and learned `Cache TTL` countdown.
+- **Generation Output & 3-Level Tool Calls Tree**:
+  - Splits output into `Thinking` and `Response & Tools` against the model's output ceiling.
+  - Expandable 3-level **Tool Calls** tree: `Total Calls → Tool Name (count & share %) → Target File / Command`.
+- **Paginated Telemetry Ledger (`By Prompt` | `By Step`)**:
+  - **By Prompt**: Groups internal agent tool loops by user prompt boundary with model routing chains, estimated 5h/weekly quota cost, and cache hit status chips.
+  - **By Step**: Granular per-LLM-call ledger with visual left-hand prompt-grouping brackets across steps and pages (`15` items/page).
+
+---
+
+## Tabs & Filtering
+
+- **Session Tab**: Live telemetry for the active conversation (or currently inspected subagent).
+- **Agents Tab**: Automatically discovers child subagents spawned by the current conversation, showing their role, model, turn count, and token volume. Click any subagent to inspect its full telemetry on the Session tab.
+- **Global Tab**:
+  - **Separated Per-Account Storage**: Automatically isolates global token ledgers, learned cache TTL bounds, quota correlation samples, and snapshots by logged-in account (`email · plan`).
+  - **All-Time & Since-Reset Totals**: Aggregates all local Antigravity conversations in the background without blocking the UI.
+  - **Manual & Auto 100% Quota Snapshots**: Saves named snapshots manually or automatically when a quota cycle hits 100%, plus full JSON export/import.
+- **Per-Model Filter Dropdown**: Filter Session, Coding HUD, Quotas, and Global views to a single model or `All Models`.
 
 ---
 
 ## Plugin Architecture
 
-The plugin is structured into three integrated components:
-
-```
+```text
 token-context-meter/
-├── plugin.json                 # Antigravity plugin manifest
+├── plugin.json                 # Antigravity plugin manifest (Procontext)
 ├── mcp_config.json             # MCP server registration
 ├── assets/
-│   └── logo.svg                # Plugin vector emblem
+│   ├── logo.svg                # Plugin vector emblem
+│   └── screenshots/            # README UI screenshots
+│       ├── coding-hud.png
+│       ├── simple-mode.png
+│       ├── full-mode.png
+│       └── global-quotas.png
 ├── sidecars/
 │   └── meter/
 │       ├── sidecar.json        # Sidecar auxiliary pane configuration
-│       ├── index.html          # Context meter dashboard
-│       ├── styles.css          # Host-themed styling and typography
-│       ├── app.js              # Real-time dashboard controller
+│       ├── index.html          # Procontext dashboard markup (HUD / Simple / Full)
+│       ├── styles.css          # Host-themed styling, brand tokens & sparklines
+│       ├── app.js              # Real-time dashboard & HUD controller
 │       ├── server.js           # Sidecar bootstrap loader
-│       ├── main.mjs            # Sidecar SDK and HTTP fallback router
-│       └── telemetry.mjs       # Connect RPC client and credentials resolver
+│       ├── main.mjs            # Sidecar SDK and standalone HTTP server
+│       ├── telemetry.mjs       # Connect RPC client, cache TTL learner & subagent scanner
+│       └── global-store.mjs    # Per-account global ledger, quota correlation & snapshots
 ├── mcp/
 │   └── server.mjs              # Model Context Protocol stdio server
 └── skills/
@@ -89,34 +119,32 @@ token-context-meter/
         └── SKILL.md            # /context slash command definition
 ```
 
-### 1. Auxiliary Sidecar (`sidecars/meter`)
-Runs as a background process and renders in Antigravity Desktop's auxiliary side panel (`SIDECAR_UI_ENTRYPOINT_AUX_PANE`). It exposes endpoints for real-time telemetry (`/api/tokens`) and model specifications (`/api/models`).
-
-### 2. MCP Server (`mcp/server.mjs`)
-Implements the Model Context Protocol over stdio (`JSON-RPC 2.0`), exposing two tools:
-- `get_token_context`: Returns live context metrics, active turn breakdown, and session totals.
-- `get_turn_history`: Returns historical logs supporting both `prompt` and `step` aggregation modes.
-
-### 3. Skill (`skills/context/SKILL.md`)
-Defines the `/context` command in chat, enabling interactive queries directly within conversation threads.
+### MCP Tools (`mcp/server.mjs`)
+Exposes three tools over stdio (`JSON-RPC 2.0`):
+1. `get_token_context`: Returns live context window utilization, active turn breakdown, learned cache lifespan bounds, account & 5h/weekly quota pools, and session totals (supports optional `model` and `conversation_id` filters).
+2. `get_quota_status`: Returns dedicated 5-hour and weekly quota pool progress bars, empirical tokens-per-1% burn correlation, remaining runway estimates, and per-model separation.
+3. `get_turn_history`: Returns historical telemetry in either `prompt` or `step` aggregation mode.
 
 ---
 
-## Installation & Configuration
+## Installation
 
 ### Prerequisites
-- Google Antigravity Desktop (version 1.15.0 or later)
-- Node.js (version 18 or later)
+- Google Antigravity Desktop (`v1.15.0+`)
+- Node.js (`v18+`)
 
-### Directory Setup
-Clone or place the plugin directory into your Antigravity plugins directory:
+### 1. Clone into Antigravity Plugins Directory
 
 ```bash
-git clone https://github.com/BlueNebula-Dev/token-context-meter.git ~/.gemini/config/plugins/token-context-meter
+git clone https://github.com/NyeowsZ/token-context-meter.git ~/.gemini/config/plugins/token-context-meter
 ```
 
-### Registration
-Enable the plugin and register the sidecar in `~/.gemini/config/config.json`:
+*(On Windows PowerShell)*:
+```powershell
+git clone https://github.com/NyeowsZ/token-context-meter.git "$HOME\.gemini\config\plugins\token-context-meter"
+```
+
+### 2. Enable in `~/.gemini/config/config.json`
 
 ```json
 {
@@ -135,20 +163,12 @@ Enable the plugin and register the sidecar in `~/.gemini/config/config.json`:
 }
 ```
 
-Restart Antigravity Desktop to load the plugin and sidecar.
+Restart Antigravity Desktop to load **Procontext** in the auxiliary side panel, or type `/context` in any chat.
 
 ---
 
-## Usage
+## Credits & License
 
-### In the Side Panel
-Click the sidecar icon or open `sidecar://token-context-meter/meter/` to display the real-time ledger. Use the `By Prompt` and `By Step` tabs in the Telemetry section to switch between prompt-level summaries and individual call traces.
-
-### In Chat
-Type `/context` or ask about token consumption to retrieve an instant report directly in your chat stream.
-
----
-
-## License
-
-MIT License. See LICENSE for details.
+- Original plugin foundation by [BlueNebula-Dev/token-context-meter](https://github.com/BlueNebula-Dev/token-context-meter).
+- **Procontext** redesign, Coding HUD, cache TTL survival learner, and quota correlation engine by [NyeowsZ](https://github.com/NyeowsZ/token-context-meter).
+- Licensed under the MIT License.

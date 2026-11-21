@@ -673,6 +673,14 @@
 
     if (!cacheLifespanStat) return;
     cacheLifespanStat.classList.remove('warm', 'expiring', 'cold');
+    const ttlCountdownEl = document.getElementById('cacheTtlCountdown');
+    const setCountdown = (txt, cls) => {
+      if (!ttlCountdownEl) return;
+      ttlCountdownEl.textContent = txt;
+      ttlCountdownEl.className = 'ttl-countdown' + (cls ? ' ' + cls : '');
+      ttlCountdownEl.style.display = txt ? '' : 'none';
+    };
+    setCountdown('');
 
     if (!stat || stat.status === 'no_data') {
       cacheLifespanStat.textContent = '—';
@@ -686,6 +694,17 @@
     parts.push(`Chat-to-chat samples (≥30s): ${stat.sampleCount}`);
     if (stat.isPersisted) parts.push('Storage: Learned across chats (persisted in account store)');
     cacheLifespanStat.title = parts.join('\n');
+
+    if (elapsedMs != null) {
+      const fmt = (ms) => formatDurationShort(Math.max(0, ms));
+      if (stat.maxWarmGapMs != null && elapsedMs < stat.maxWarmGapMs) {
+        setCountdown(`${fmt(stat.maxWarmGapMs - elapsedMs)} left`, 'warm');
+      } else if (stat.minColdGapMs != null && elapsedMs < stat.minColdGapMs) {
+        setCountdown(`≤ ${fmt(stat.minColdGapMs - elapsedMs)} left`, 'expiring');
+      } else if (stat.minColdGapMs != null) {
+        setCountdown('expired', 'cold');
+      }
+    }
 
     const sampleTag = stat.isPersisted ? `${stat.sampleCount} across chats` : `${stat.sampleCount}`;
 
@@ -750,7 +769,7 @@
         (p.models || []).some(m => m.toLowerCase().includes(lower)) ||
         (p.correlation?.byModel || []).some(m => m.model.toLowerCase().includes(lower))
       );
-      if (matched.length) list = matched;
+      if (matched.length) list = [...matched, ...list.filter(p => !matched.includes(p))];
     }
 
     if (!list.length) {

@@ -1536,3 +1536,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .quota-group-head { padding-left: 0; }
 .quota-pool-label { font-weight: 600; }
+
+/* Live cache TTL countdown */
+.ttl-countdown {
+  margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums;
+  background: var(--cx-fill); color: var(--cx-fg-muted);
+}
+.ttl-countdown.warm { color: var(--tm-ok); background: color-mix(in srgb, var(--tm-ok) 14%, transparent); }
+.ttl-countdown.expiring { color: var(--tm-warn); background: color-mix(in srgb, var(--tm-warn) 14%, transparent); }
+.ttl-countdown.cold { color: var(--tm-crit); background: color-mix(in srgb, var(--tm-crit) 14%, transparent); }

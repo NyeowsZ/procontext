@@ -41,7 +41,8 @@
   let inspectedAgent = null; // { conversationId, role } or null
   let activeView = localStorage.getItem('token_meter_view') || 'prompt';
 
-  // Tool Calls 3-level drill-down state
+  // Sub-page navigation state for deep drill-downs (same SPA, dedicated page view)
+  let activeDetailPage = null;
   let toolTreeExpanded = false;
   let compactionTreeExpanded = false;
   const expandedToolNames = new Set();
@@ -115,6 +116,7 @@
   const tabSession = document.getElementById('tabSession');
   const tabAgents = document.getElementById('tabAgents');
   const tabGlobal = document.getElementById('tabGlobal');
+  const quotaDetailPane = document.getElementById('quotaDetailPane');
 
   const agentInspectBanner = document.getElementById('agentInspectBanner');
   const agentInspectLabel = document.getElementById('agentInspectLabel');
@@ -477,25 +479,10 @@
         compactionCountVal.textContent = `-${savedPct}%`;
       }
       if (compactionDesc) {
-        compactionDesc.innerHTML = `${formatCompactNum(lastC.tokensBefore)} → ${formatCompactNum(lastC.tokensAfter)} <span class="compaction-pill" title="Latest compaction at Turn #${lastC.turnIndex} (${ctx.compactionCount} checkpoint${ctx.compactionCount === 1 ? '' : 's'})">Turn #${lastC.turnIndex} · ${ctx.compactionCount}×</span>`;
-      }
-      if (compactionToggleRow) {
-        compactionToggleRow.classList.toggle('expanded', compactionTreeExpanded);
-        compactionToggleRow.setAttribute('aria-expanded', String(compactionTreeExpanded));
+        compactionDesc.textContent = `${formatCompactNum(lastC.tokensBefore)} → ${formatCompactNum(lastC.tokensAfter)} · Turn #${lastC.turnIndex} (${ctx.compactionCount}×)`;
       }
       if (compactionCheckpointsList) {
-        compactionCheckpointsList.classList.toggle('hidden', !compactionTreeExpanded);
-        if (compactionTreeExpanded) {
-          compactionCheckpointsList.innerHTML = ctx.compactions.map((c, idx) => {
-            const pct = c.tokensBefore > 0 ? ((c.tokensSaved / c.tokensBefore) * 100).toFixed(1) : '0.0';
-            return `
-              <div class="tool-target-row" title="Checkpoint #${idx + 1} at Turn #${c.turnIndex}: ${formatNum(c.tokensBefore)} → ${formatNum(c.tokensAfter)} tokens (${formatNum(c.tokensSaved)} saved)">
-                <span class="tool-target-label">#${idx + 1} · Turn #${c.turnIndex} (${formatCompactNum(c.tokensBefore)} → ${formatCompactNum(c.tokensAfter)})</span>
-                <span class="tool-target-count">-${formatCompactNum(c.tokensSaved)} (-${pct}%)</span>
-              </div>
-            `;
-          }).join('');
-        }
+        compactionCheckpointsList.classList.add('hidden');
       }
     } else {
       compactionAlert.style.display = 'none';
@@ -1197,42 +1184,10 @@
     const tools = summary?.tools || [];
     if (toolCallsTotalVal) toolCallsTotalVal.textContent = formatNum(total);
     if (toolCallsTypesVal) toolCallsTypesVal.textContent = `${tools.length} tool${tools.length === 1 ? '' : 's'}`;
-
-    if (toolCallsRootRow) {
-      toolCallsRootRow.classList.toggle('expanded', toolTreeExpanded);
-      toolCallsRootRow.setAttribute('aria-expanded', String(toolTreeExpanded));
+    if (toolCallsTree) toolCallsTree.classList.add('hidden');
+    if (activeDetailPage && (activeDetailPage.type === 'tools' || activeDetailPage.type === 'tool-targets')) {
+      renderDetailPage();
     }
-    if (!toolCallsTree) return;
-    toolCallsTree.classList.toggle('hidden', !toolTreeExpanded);
-    if (!toolTreeExpanded) return;
-
-    if (!tools.length) {
-      toolCallsTree.innerHTML = `<div class="tool-target-row">No tool calls recorded</div>`;
-      return;
-    }
-
-    toolCallsTree.innerHTML = tools.map(tool => {
-      const isOpen = expandedToolNames.has(tool.name);
-      const targetsHtml = (tool.targets || []).map(tg => `
-        <div class="tool-target-row" title="${escapeHtml(tg.label)}">
-          <span class="tool-target-label">${escapeHtml(tg.label)}</span>
-          <span class="tool-target-count">${formatNum(tg.count)}</span>
-        </div>
-      `).join('');
-
-      return `
-        <div class="tool-node${isOpen ? ' expanded' : ''}" data-tool-name="${escapeHtml(tool.name)}">
-          <div class="tool-node-row" role="button" tabindex="0" aria-expanded="${isOpen}" title="Click to show specific targets for ${escapeHtml(tool.name)}">
-            <span class="tool-node-name">
-              <svg class="tree-chev" width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
-              <span>${escapeHtml(tool.name)}</span>
-            </span>
-            <span class="tool-node-count">${formatNum(tool.count)}</span>
-          </div>
-          <div class="tool-targets-list">${targetsHtml}</div>
-        </div>
-      `;
-    }).join('');
   }
 
   // ---------- Agents Tab Rendering ----------
@@ -1413,16 +1368,23 @@
     if (/gemini|flash|pro\b/.test(l)) return 'gemini';
     return 'other';
   }
-  function renderBrandChips(models) {
-    const groups = new Map();
-    for (const m of models || []) {
-      const b = brandOf(m);
-      if (!groups.has(b)) groups.set(b, []);
-      groups.get(b).push(m);
-    }
-    return [...groups.entries()].map(([b, ms]) =>
-      `<span class="brand-chip brand-${b}" title="${escapeHtml(ms.join('\n'))}"><i></i>${BRAND_NAMES[b]}</span>`
-    ).join('');
+  function shortPoolLabel(p) {
+    const raw = `${p?.poolId || ''} ${p?.label || ''} ${(p?.models || []).join(' ')}`.toLowerCase();
+    if (raw.includes('claude') && (raw.includes('gpt') || raw.includes('oss'))) return 'Claude / GPT';
+    if (raw.includes('argon')) return 'Argon';
+    if (raw.includes('gemini')) return 'Gemini';
+    if (raw.includes('claude')) return 'Claude';
+    if (raw.includes('gpt')) return 'GPT';
+    return String(p?.label || 'Pool').replace(/-OSS\b/gi, '').replace(/\s*·.*$/, '').trim();
+  }
+
+  function poolBrandOf(p) {
+    const short = shortPoolLabel(p);
+    if (short === 'Claude / GPT' || short === 'Claude') return 'claude';
+    if (short === 'Argon') return 'argon';
+    if (short === 'Gemini') return 'gemini';
+    if (short === 'GPT') return 'gpt';
+    return brandOf((p?.models || [])[0] || p?.label);
   }
 
   function renderQuotaPoolsInto(containerEl, pools, filterModel) {
@@ -1443,182 +1405,520 @@
       return;
     }
 
-    const renderPool = (p) => {
+    containerEl.innerHTML = list.map((p) => {
       const used = Math.min(100, Math.max(0, p.usedPct || 0));
-      const barColor = used >= 80 ? 'var(--tm-crit)' : (used >= 50 ? 'var(--tm-warn)' : 'var(--tm-ok)');
-      const winTag = p.windowType === 'weekly' ? 'Weekly' : '5h';
-      const resetLabel = p.resetTime ? `Resets in ${formatCountdown(p.msUntilReset)}` : '';
-      const isOpen = expandedQuotaPoolIds.has(p.poolId);
-      const corr = p.correlation;
-
-      let detailsHtml = '';
-      if (corr && (corr.hasData || (corr.byModel && corr.byModel.length > 0))) {
-        const p1 = corr.per1Pct;
-        const rem = corr.estRemaining;
-        const full = corr.estFull100;
-        const modelsList = corr.byModel || [];
-
-        // If filtered to a specific model, show that model's isolated separation block first
-        let focusedModelHtml = '';
-        if (isFiltered) {
-          const lower = filterModel.toLowerCase();
-          const targetM = modelsList.find(m => m.model.toLowerCase().includes(lower));
-          if (targetM) {
-            focusedModelHtml = `
-              <div class="quota-subhead quota-model-focus-header">
-                <span class="quota-focus-label">Separated: ${escapeHtml(targetM.model)}</span>
-                <button type="button" class="quota-focus-clear-btn" data-quota-action="clear-model">All Models</button>
-              </div>
-              ${renderLedgerRows([
-                { dot: 'dot-cache', label: 'Cache Read', value: `${formatCompactNum(targetM.cacheReadTokens)} (${targetM.cacheEfficiencyPct}%)`, valClass: 'val-cache' },
-                { dot: 'dot-input', label: 'New Input', value: formatCompactNum(targetM.inputTokens) },
-                { dot: 'dot-think', label: 'Thinking', value: formatCompactNum(targetM.thinkingTokens), valClass: 'val-think' },
-                { dot: 'dot-output', label: 'Response', value: formatCompactNum(targetM.responseTokens) },
-                { dot: 'dot-total', label: 'Model Total', value: `${formatCompactNum(targetM.totalProcessedTokens)} (${targetM.turns}t)`, valClass: 'val-strong' }
-              ])}
-              ${targetM.per1Pct ? `
-                <div class="quota-subhead"><span>${escapeHtml(targetM.model)} Burn / 1%</span><span>~${targetM.estPctUsed}% used (${targetM.sharePct}% share)</span></div>
-                ${renderLedgerRows([
-                  { dot: 'dot-cache', label: 'Cache / 1%', value: formatCompactNum(targetM.per1Pct.cacheReadTokens), valClass: 'val-cache' },
-                  { dot: 'dot-input', label: 'Input / 1%', value: formatCompactNum(targetM.per1Pct.inputTokens) },
-                  { dot: 'dot-think', label: 'Thinking / 1%', value: formatCompactNum(targetM.per1Pct.thinkingTokens), valClass: 'val-think' },
-                  { dot: 'dot-output', label: 'Response / 1%', value: formatCompactNum(targetM.per1Pct.responseTokens) },
-                  { dot: 'dot-total', label: 'Total / 1%', value: `${formatCompactNum(targetM.per1Pct.totalProcessedTokens)} (~${targetM.per1Pct.turns}t)`, valClass: 'val-strong' }
-                ])}
-              ` : ''}
-              ${targetM.estRemaining ? `
-                <div class="quota-subhead"><span>Model Runway (${p.remainingPct.toFixed(1)}% left)</span><span>~${formatNum(targetM.estRemaining.turns)} turns</span></div>
-                ${renderLedgerRows([
-                  { dot: 'dot-total', label: 'Est. Remaining', value: formatCompactNum(targetM.estRemaining.totalProcessedTokens), valClass: 'val-strong' },
-                  { dot: 'dot-total', label: 'Est. 100% Budget', value: `${formatCompactNum(targetM.estFull100?.totalProcessedTokens || 0)} (~${formatNum(targetM.estFull100?.turns || 0)}t)` }
-                ])}
-              ` : ''}
-            `;
-          }
-        }
-
-        // Overall Pool Burn Rate and Estimates (when corr.hasData)
-        let poolLedgerHtml = '';
-        if (corr.hasData && p1 && rem && full) {
-          poolLedgerHtml = `
-            <div class="quota-subhead"><span>Per 1% of ${winTag} Quota</span><span>(${corr.observedPct}% obs)</span></div>
-            ${renderLedgerRows([
-              { dot: 'dot-cache', label: 'Cache Read / 1%', value: formatCompactNum(p1.cacheReadTokens), valClass: 'val-cache' },
-              { dot: 'dot-input', label: 'New Input / 1%', value: formatCompactNum(p1.inputTokens) },
-              { dot: 'dot-think', label: 'Thinking / 1%', value: formatCompactNum(p1.thinkingTokens), valClass: 'val-think' },
-              { dot: 'dot-output', label: 'Response / 1%', value: formatCompactNum(p1.responseTokens) },
-              { dot: 'dot-total', label: 'Total / 1%', value: `${formatCompactNum(p1.totalProcessedTokens)} (~${p1.turns}t)`, valClass: 'val-strong' }
-            ])}
-            <div class="quota-subhead"><span>Pool Runway (${p.remainingPct.toFixed(1)}% left)</span><span>~${formatNum(rem.turns)} turns</span></div>
-            ${renderLedgerRows([
-              { dot: 'dot-total', label: 'Est. Remaining', value: formatCompactNum(rem.totalProcessedTokens), valClass: 'val-strong' },
-              { dot: 'dot-total', label: 'Est. 100% Budget', value: `${formatCompactNum(full.totalProcessedTokens)} (~${formatNum(full.turns)}t)` }
-            ])}
-          `;
-        } else {
-          const obs = corr?.observedPct || 0;
-          poolLedgerHtml = `<div class="quota-learning-note">Collecting 1% token correlation (${obs}% / 0.5% min delta observed). Use models in this pool to unlock per-1% &amp; runway estimates.</div>`;
-        }
-
-        // Model Separation list (with drill-down per model)
-        let modelsHtml = '';
-        if (modelsList.length > 0) {
-          modelsHtml = `
-            <div class="quota-subhead"><span>Model Separation (${modelsList.length})</span><span>Quota Impact</span></div>
-            ${modelsList.map(m => {
-              const mKey = `${p.poolId}:${m.model}`;
-              const isModelOpen = expandedQuotaModelNames.has(mKey);
-              const isCurrent = isFiltered && filterModel.toLowerCase() === m.model.toLowerCase();
-              return `
-                <div class="quota-model-card${isModelOpen ? ' open' : ''}${isCurrent ? ' selected' : ''}">
-                  <div class="quota-model-row" data-quota-action="toggle-model" data-model-key="${escapeHtml(mKey)}">
-                    <span class="quota-model-left">
-                      <svg class="tree-chev" width="10" height="10" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
-                      <span class="quota-model-name brand-${brandOf(m.model)}">${escapeHtml(m.model)}</span>
-                    </span>
-                    <span class="quota-model-right">
-                      <span class="quota-model-share">${formatCompactNum(m.totalProcessedTokens)} · ${m.sharePct}%</span>
-                      <span class="quota-model-used">~${m.estPctUsed}%</span>
-                      <button type="button" class="quota-focus-btn" data-quota-action="focus-model" data-focus-model="${escapeHtml(m.model)}" title="Focus all metrics on this model">Focus</button>
-                    </span>
-                  </div>
-                  ${isModelOpen ? `
-                    <div class="quota-model-drilldown font-mono">
-                      ${renderLedgerRows([
-                        { dot: 'dot-cache', label: 'Cache Read', value: `${formatCompactNum(m.cacheReadTokens)} (${m.cacheEfficiencyPct}%)`, valClass: 'val-cache' },
-                        { dot: 'dot-input', label: 'New Input', value: formatCompactNum(m.inputTokens) },
-                        { dot: 'dot-think', label: 'Thinking', value: formatCompactNum(m.thinkingTokens), valClass: 'val-think' },
-                        { dot: 'dot-output', label: 'Response', value: formatCompactNum(m.responseTokens) },
-                        { dot: 'dot-total', label: 'Total Tokens', value: `${formatCompactNum(m.totalProcessedTokens)} (${m.turns}t)`, valClass: 'val-strong' }
-                      ])}
-                      ${m.per1Pct ? `
-                        <div class="quota-drill-subhead"><span>Burn / 1% Quota</span><span>~${formatCompactNum(m.per1Pct.totalProcessedTokens)} (~${m.per1Pct.turns}t)</span></div>
-                      ` : ''}
-                      ${m.estRemaining ? `
-                        <div class="quota-drill-subhead"><span>Runway (${p.remainingPct.toFixed(1)}% left)</span><span>~${formatCompactNum(m.estRemaining.totalProcessedTokens)} (~${m.estRemaining.turns}t)</span></div>
-                      ` : ''}
-                    </div>
-                  ` : ''}
-                </div>
-              `;
-            }).join('')}
-          `;
-        }
-
-        detailsHtml = `
-          ${focusedModelHtml}
-          ${focusedModelHtml ? '<div class="quota-divider"></div>' : ''}
-          ${poolLedgerHtml}
-          ${modelsHtml}
-        `;
-      } else {
-        const obs = corr?.observedPct || 0;
-        detailsHtml = `<div class="quota-learning-note">Collecting 1% token correlation (${obs}% / 0.5% min delta observed). Use models in this pool to unlock per-1% &amp; runway estimates.</div>`;
-      }
-
-      const subRight = corr?.hasData
-        ? `~${formatCompactNum(corr.per1Pct.totalProcessedTokens)}/1% · ${resetLabel}`
-        : resetLabel;
-
-      const modelCount = (p.models || []).length;
-      const modelsTitle = modelCount ? `Models sharing this quota (${modelCount}):\n${p.models.join('\n')}` : '';
+      const pName = shortPoolLabel(p);
+      const pBrand = poolBrandOf(p);
       const barState = used >= 80 ? 'crit' : (used >= 50 ? 'warn' : 'ok');
-      const burn = corr?.hasData && corr.per1Pct ? `~${formatCompactNum(corr.per1Pct.totalProcessedTokens)} / 1%` : '';
-      return `
-        <div class="quota-pool-item brand-${brandOf((p.models || [])[0] || p.label)}${isOpen ? ' expanded' : ''}" style="--brand2: var(--brand-${brandOf((p.models || []).find(m => brandOf(m) !== brandOf((p.models || [])[0])) || (p.models || [])[0] || p.label)})" data-pool-id="${escapeHtml(p.poolId)}">
-          <div class="quota-pool-top">
-            <span class="quota-pool-left">
-              <span class="quota-pool-label" title="${escapeHtml(p.label)}">${escapeHtml(p.label)}</span>
-              ${modelCount ? `<span class="quota-brand-chips" title="${escapeHtml(modelsTitle)}">${renderBrandChips(p.models)}</span>` : ''}
-            </span>
-            <span class="quota-pool-pct ${barState}">${used.toFixed(1)}%</span>
-          </div>
-          <div class="quota-pool-bar">
-            <div class="quota-pool-fill ${barState}" style="width: ${used}%"></div>
-          </div>
-          <div class="quota-pool-sub">
-            <span>${p.remainingPct.toFixed(1)}% left${resetLabel ? ` · ${escapeHtml(resetLabel)}` : ''}</span>
-            <span>${escapeHtml(burn)}</span>
-          </div>
-          <div class="quota-pool-details">${detailsHtml}</div>
-        </div>
-      `;
-    };
+      const resetShort = p.resetTime ? formatCountdown(p.msUntilReset) : '—';
+      const corr = p.correlation;
+      const burnShort = (!simpleMode && corr?.hasData && corr.per1Pct)
+        ? `~${formatCompactNum(corr.per1Pct.totalProcessedTokens)}/1% · ${resetShort}`
+        : resetShort;
+      const winLabel = p.windowType === 'weekly' ? 'Weekly window' : '5h window';
+      const rowTitle = `${pName} (${winLabel})\nUsed: ${used.toFixed(1)}% · Remaining: ${p.remainingPct.toFixed(1)}%\nResets in ${resetShort}\nClick to view detailed breakdown`;
 
-    const windows = [
-      { type: '5h', title: '5-Hour Window' },
-      { type: 'weekly', title: 'Weekly Window' }
-    ];
-    containerEl.innerHTML = windows.map(w => {
-      const pools = list.filter(p => (p.windowType === 'weekly' ? 'weekly' : '5h') === w.type);
-      if (!pools.length) return '';
       return `
-        <div class="quota-group">
-          <div class="quota-group-head"><span>${w.title}</span><span class="quota-group-count">${pools.length} pool${pools.length === 1 ? '' : 's'}</span></div>
-          ${pools.map(renderPool).join('')}
+        <div class="cat-row tool-tree-toggle quota-pool-row" data-pool-id="${escapeHtml(p.poolId)}" role="button" tabindex="0" title="${escapeHtml(rowTitle)}">
+          <span class="swatch sw-brand-${pBrand}"></span>
+          <span class="cat-label-chev">
+            <span class="cat-label">${escapeHtml(pName)}</span>
+            <svg class="tree-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+          </span>
+          <span class="cat-tok">${escapeHtml(burnShort)}</span>
+          <span class="cat-pct quota-row-pct ${barState}">${used.toFixed(1)}%</span>
         </div>
       `;
     }).join('');
+  }
+
+  // ---------- SPA Sub-Page Detail View (for Quota Pools, Models, Tool Calls, Compactions, Snapshots) ----------
+  function syncActivePanes() {
+    const inDetail = Boolean(activeDetailPage);
+    if (quotaDetailPane) quotaDetailPane.classList.toggle('hidden', !inDetail);
+    if (tabSession) tabSession.classList.toggle('hidden', inDetail || activeTab !== 'session');
+    if (tabAgents) tabAgents.classList.toggle('hidden', inDetail || activeTab !== 'agents');
+    if (tabGlobal) tabGlobal.classList.toggle('hidden', inDetail || activeTab !== 'global');
+  }
+
+  function openDetailPage(detail) {
+    activeDetailPage = detail;
+    syncActivePanes();
+    renderDetailPage();
+  }
+
+  function closeDetailPage() {
+    activeDetailPage = null;
+    syncActivePanes();
+  }
+
+  function renderTokenCatRows(tot) {
+    const total = tot?.totalProcessedTokens || ((tot?.cacheReadTokens || 0) + (tot?.inputTokens || 0) + (tot?.outputTokens || 0)) || 0;
+    const cache = tot?.cacheReadTokens || 0;
+    const input = tot?.inputTokens || 0;
+    const think = tot?.thinkingTokens || 0;
+    const resp = tot?.responseTokens ?? Math.max(0, (tot?.outputTokens || 0) - think);
+    return `
+      <div class="cat-list font-mono">
+        <div class="cat-row">
+          <span class="swatch sw-cache"></span>
+          <span class="cat-label">Cache Read</span>
+          <span class="cat-tok">${formatNum(cache)}</span>
+          <span class="cat-pct">${pctStr(cache, total)}</span>
+        </div>
+        <div class="cat-row">
+          <span class="swatch sw-input"></span>
+          <span class="cat-label">New Input</span>
+          <span class="cat-tok">${formatNum(input)}</span>
+          <span class="cat-pct">${pctStr(input, total)}</span>
+        </div>
+        <div class="cat-row">
+          <span class="swatch sw-think"></span>
+          <span class="cat-label">Thinking</span>
+          <span class="cat-tok">${formatNum(think)}</span>
+          <span class="cat-pct">${pctStr(think, total)}</span>
+        </div>
+        <div class="cat-row">
+          <span class="swatch sw-output"></span>
+          <span class="cat-label">Response &amp; Tools</span>
+          <span class="cat-tok">${formatNum(resp)}</span>
+          <span class="cat-pct">${pctStr(resp, total)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDetailPage() {
+    if (!quotaDetailPane || !activeDetailPage) return;
+    const d = activeDetailPage;
+
+    // 1. Quota Pool Detail Page
+    if (d.type === 'pool') {
+      const pools = globalUsageData?.quotaPools || [];
+      const p = pools.find(x => x.poolId === d.poolId);
+      if (!p) {
+        closeDetailPage();
+        return;
+      }
+      const pName = shortPoolLabel(p);
+      const pBrand = poolBrandOf(p);
+      const used = Math.min(100, Math.max(0, p.usedPct || 0));
+      const barState = used >= 80 ? 'crit' : (used >= 50 ? 'warn' : 'ok');
+      const winTitle = p.windowType === 'weekly' ? 'Weekly Window' : '5-Hour Window';
+      const resetShort = p.resetTime ? formatCountdown(p.msUntilReset) : '—';
+      const corr = p.correlation;
+      const p1 = corr?.per1Pct;
+      const rem = corr?.estRemaining;
+      const full = corr?.estFull100;
+      const modelsList = corr?.byModel || [];
+
+      const burnSectionHtml = (corr?.hasData && p1)
+        ? `
+          <section class="section-block">
+            <div class="section-header-row">
+              <span class="section-label">Per 1% Quota Burn</span>
+              <span class="section-summary-right font-mono">
+                <span class="meta-strong">${formatCompactNum(p1.totalProcessedTokens)}</span>
+                <span class="turn-count">~${p1.turns} turns</span>
+                <span class="cache-rate">${corr.observedPct}% obs</span>
+              </span>
+            </div>
+            ${renderTokenCatRows(p1)}
+          </section>
+        `
+        : `
+          <section class="section-block">
+            <div class="section-header-row">
+              <span class="section-label">Per 1% Quota Burn</span>
+              <span class="meta-subtle font-mono">${corr?.observedPct || 0}% / 0.5% min obs</span>
+            </div>
+            <div class="meta-subtle font-mono">Use models in this pool to unlock per-1% token burn and runway estimates.</div>
+          </section>
+        `;
+
+      const runwaySectionHtml = (corr?.hasData && rem && full)
+        ? `
+          <section class="section-block">
+            <div class="section-header-row">
+              <span class="section-label">Pool Runway</span>
+              <span class="section-summary-right font-mono">
+                <span class="meta-strong">~${formatNum(rem.turns)} turns</span>
+                <span class="turn-count">${p.remainingPct.toFixed(1)}% left</span>
+              </span>
+            </div>
+            <div class="cat-list font-mono">
+              <div class="cat-row">
+                <span class="swatch sw-cache"></span>
+                <span class="cat-label">Est. Remaining</span>
+                <span class="cat-tok">${formatNum(rem.totalProcessedTokens)}</span>
+                <span class="cat-pct">${p.remainingPct.toFixed(1)}%</span>
+              </div>
+              <div class="cat-row">
+                <span class="swatch sw-input"></span>
+                <span class="cat-label">Est. 100% Budget</span>
+                <span class="cat-tok">${formatNum(full.totalProcessedTokens)}</span>
+                <span class="cat-pct">~${formatNum(full.turns)}t</span>
+              </div>
+            </div>
+          </section>
+        `
+        : '';
+
+      const modelsSectionHtml = modelsList.length > 0
+        ? `
+          <section class="section-block pb-6">
+            <div class="section-header-row">
+              <span class="section-label">Models</span>
+              <span class="meta-subtle font-mono">${modelsList.length} active</span>
+            </div>
+            <div class="cat-list font-mono">
+              ${modelsList.map(m => `
+                <div class="cat-row tool-tree-toggle" data-detail-action="open-pool-model" data-pool-id="${escapeHtml(p.poolId)}" data-model-name="${escapeHtml(m.model)}" role="button" tabindex="0" title="Click to inspect ${escapeHtml(m.model)}">
+                  <span class="swatch sw-brand-${brandOf(m.model)}"></span>
+                  <span class="cat-label-chev">
+                    <span class="cat-label">${escapeHtml(m.model)}</span>
+                    <svg class="tree-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+                  </span>
+                  <span class="cat-tok">${formatNum(m.totalProcessedTokens)}</span>
+                  <span class="cat-pct">~${m.estPctUsed}%</span>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+        `
+        : '';
+
+      quotaDetailPane.innerHTML = `
+        <div class="detail-page-header">
+          <button type="button" class="pill-btn" data-detail-action="back">← Back</button>
+          <div class="detail-page-title-wrap">
+            <span class="swatch sw-brand-${pBrand}"></span>
+            <span class="detail-page-title">${escapeHtml(pName)}</span>
+            <span class="meta-subtle font-mono">${escapeHtml(winTitle)}</span>
+          </div>
+        </div>
+
+        <section class="section-block">
+          <div class="section-header-row">
+            <span class="section-label">Quota Status</span>
+            <span class="section-summary-right font-mono">
+              <span class="meta-strong">${used.toFixed(1)}% used</span>
+              <span class="turn-count">Resets in ${escapeHtml(resetShort)}</span>
+            </span>
+          </div>
+          <div class="cat-list font-mono">
+            <div class="cat-row">
+              <span class="swatch sw-brand-${pBrand}"></span>
+              <span class="cat-label">Consumed</span>
+              <span class="cat-tok">${used.toFixed(1)}%</span>
+              <span class="cat-pct quota-row-pct ${barState}">${used.toFixed(1)}%</span>
+            </div>
+            <div class="cat-row">
+              <span class="swatch sw-cache"></span>
+              <span class="cat-label">Remaining</span>
+              <span class="cat-tok">Resets in ${escapeHtml(resetShort)}</span>
+              <span class="cat-pct">${p.remainingPct.toFixed(1)}%</span>
+            </div>
+          </div>
+        </section>
+
+        ${burnSectionHtml}
+        ${runwaySectionHtml}
+        ${modelsSectionHtml}
+      `;
+      return;
+    }
+
+    // 2. Pool Model Detail Page
+    if (d.type === 'pool-model') {
+      const pools = globalUsageData?.quotaPools || [];
+      const p = pools.find(x => x.poolId === d.poolId);
+      const m = p?.correlation?.byModel?.find(x => x.model === d.modelName);
+      if (!p || !m) {
+        closeDetailPage();
+        return;
+      }
+      const pName = shortPoolLabel(p);
+      const mBrand = brandOf(m.model);
+
+      quotaDetailPane.innerHTML = `
+        <div class="detail-page-header">
+          <button type="button" class="pill-btn" data-detail-action="back-to-pool" data-pool-id="${escapeHtml(p.poolId)}">← ${escapeHtml(pName)}</button>
+          <div class="detail-page-title-wrap">
+            <span class="swatch sw-brand-${mBrand}"></span>
+            <span class="detail-page-title">${escapeHtml(m.model)}</span>
+          </div>
+          <button type="button" class="pill-btn" data-detail-action="focus-model" data-model-name="${escapeHtml(m.model)}" title="Filter dashboard to this model">Focus</button>
+        </div>
+
+        <section class="section-block">
+          <div class="section-header-row">
+            <span class="section-label">Model Totals</span>
+            <span class="section-summary-right font-mono">
+              <span class="meta-strong">${formatCompactNum(m.totalProcessedTokens)}</span>
+              <span class="turn-count">${m.turns} turns</span>
+              <span class="cache-rate">${m.cacheEfficiencyPct}% cached</span>
+            </span>
+          </div>
+          ${renderTokenCatRows(m)}
+        </section>
+
+        ${m.per1Pct ? `
+          <section class="section-block">
+            <div class="section-header-row">
+              <span class="section-label">Burn / 1% Quota</span>
+              <span class="section-summary-right font-mono">
+                <span class="meta-strong">${formatCompactNum(m.per1Pct.totalProcessedTokens)}</span>
+                <span class="turn-count">~${m.estPctUsed}% used</span>
+                <span class="cache-rate">${m.sharePct}% share</span>
+              </span>
+            </div>
+            ${renderTokenCatRows(m.per1Pct)}
+          </section>
+        ` : ''}
+
+        ${m.estRemaining ? `
+          <section class="section-block pb-6">
+            <div class="section-header-row">
+              <span class="section-label">Model Runway</span>
+              <span class="section-summary-right font-mono">
+                <span class="meta-strong">~${formatNum(m.estRemaining.turns)} turns</span>
+                <span class="turn-count">${p.remainingPct.toFixed(1)}% left</span>
+              </span>
+            </div>
+            <div class="cat-list font-mono">
+              <div class="cat-row">
+                <span class="swatch sw-cache"></span>
+                <span class="cat-label">Est. Remaining</span>
+                <span class="cat-tok">${formatNum(m.estRemaining.totalProcessedTokens)}</span>
+                <span class="cat-pct">${p.remainingPct.toFixed(1)}%</span>
+              </div>
+              <div class="cat-row">
+                <span class="swatch sw-input"></span>
+                <span class="cat-label">Est. 100% Budget</span>
+                <span class="cat-tok">${formatNum(m.estFull100?.totalProcessedTokens || 0)}</span>
+                <span class="cat-pct">~${formatNum(m.estFull100?.turns || 0)}t</span>
+              </div>
+            </div>
+          </section>
+        ` : ''}
+      `;
+      return;
+    }
+
+    // 3. Tool Calls SPA Page
+    if (d.type === 'tools' || d.type === 'tool-targets') {
+      const filteredModel = selectedModel !== 'all' ? currentTelemetry?.modelStats?.[selectedModel] : null;
+      const summary = filteredModel
+        ? (currentTelemetry?.toolCalls?.byModel?.[filteredModel.displayName] || { totalCalls: 0, tools: [] })
+        : (currentTelemetry?.toolCalls || { totalCalls: 0, tools: [] });
+      const total = summary.totalCalls || 0;
+      const tools = summary.tools || [];
+
+      if (d.type === 'tool-targets') {
+        const tool = tools.find(x => x.name === d.toolName);
+        if (!tool) {
+          openDetailPage({ type: 'tools' });
+          return;
+        }
+        const targets = tool.targets || [];
+        quotaDetailPane.innerHTML = `
+          <div class="detail-page-header">
+            <button type="button" class="pill-btn" data-detail-action="back-to-tools">← Tool Calls</button>
+            <div class="detail-page-title-wrap">
+              <span class="swatch sw-tools"></span>
+              <span class="detail-page-title">${escapeHtml(tool.name)}</span>
+            </div>
+          </div>
+
+          <section class="section-block pb-6">
+            <div class="section-header-row">
+              <span class="section-label">Targets</span>
+              <span class="section-summary-right font-mono">
+                <span class="meta-strong">${formatNum(tool.count)} calls</span>
+                <span class="turn-count">${targets.length} target${targets.length === 1 ? '' : 's'}</span>
+              </span>
+            </div>
+            <div class="cat-list font-mono">
+              ${targets.length ? targets.map(tg => `
+                <div class="cat-row" title="${escapeHtml(tg.label)}">
+                  <span class="swatch sw-tools"></span>
+                  <span class="cat-label">${escapeHtml(tg.label)}</span>
+                  <span class="cat-tok">${formatNum(tg.count)}</span>
+                  <span class="cat-pct">${pctStr(tg.count, tool.count)}</span>
+                </div>
+              `).join('') : `<div class="empty-state">No target details recorded.</div>`}
+            </div>
+          </section>
+        `;
+        return;
+      }
+
+      quotaDetailPane.innerHTML = `
+        <div class="detail-page-header">
+          <button type="button" class="pill-btn" data-detail-action="back">← Back</button>
+          <div class="detail-page-title-wrap">
+            <span class="swatch sw-tools"></span>
+            <span class="detail-page-title">Tool Calls</span>
+          </div>
+        </div>
+
+        <section class="section-block pb-6">
+          <div class="section-header-row">
+            <span class="section-label">By Tool</span>
+            <span class="section-summary-right font-mono">
+              <span class="meta-strong">${formatNum(total)} total</span>
+              <span class="turn-count">${tools.length} tool${tools.length === 1 ? '' : 's'}</span>
+            </span>
+          </div>
+          <div class="cat-list font-mono">
+            ${tools.length ? tools.map(tool => `
+              <div class="cat-row tool-tree-toggle" data-detail-action="open-tool-targets" data-tool-name="${escapeHtml(tool.name)}" role="button" tabindex="0" title="Click to inspect targets for ${escapeHtml(tool.name)}">
+                <span class="swatch sw-tools"></span>
+                <span class="cat-label-chev">
+                  <span class="cat-label">${escapeHtml(tool.name)}</span>
+                  <svg class="tree-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+                </span>
+                <span class="cat-tok">${formatNum(tool.count)}</span>
+                <span class="cat-pct">${pctStr(tool.count, total)}</span>
+              </div>
+            `).join('') : `<div class="empty-state">No tool calls recorded.</div>`}
+          </div>
+        </section>
+      `;
+      return;
+    }
+
+    // 4. Context Compactions SPA Page
+    if (d.type === 'compactions') {
+      const compactions = currentTelemetry?.liveContext?.compactions || [];
+      const totalSaved = compactions.reduce((acc, c) => acc + (c.tokensSaved || 0), 0);
+      const totalBefore = compactions.reduce((acc, c) => acc + (c.tokensBefore || 0), 0);
+      const savedPct = totalBefore > 0 ? ((totalSaved / totalBefore) * 100).toFixed(1) : '0.0';
+
+      quotaDetailPane.innerHTML = `
+        <div class="detail-page-header">
+          <button type="button" class="pill-btn" data-detail-action="back">← Back</button>
+          <div class="detail-page-title-wrap">
+            <span class="swatch sw-compaction"></span>
+            <span class="detail-page-title">Context Compactions</span>
+          </div>
+        </div>
+
+        <section class="section-block pb-6">
+          <div class="section-header-row">
+            <span class="section-label">Checkpoints</span>
+            <span class="section-summary-right font-mono">
+              <span class="meta-strong">-${formatCompactNum(totalSaved)}</span>
+              <span class="turn-count">${compactions.length}×</span>
+              <span class="cache-rate">-${savedPct}%</span>
+            </span>
+          </div>
+          <div class="cat-list font-mono">
+            ${compactions.map((c, idx) => {
+              const pct = c.tokensBefore > 0 ? ((c.tokensSaved / c.tokensBefore) * 100).toFixed(1) : '0.0';
+              return `
+                <div class="cat-row" title="Checkpoint #${idx + 1} at Turn #${c.turnIndex}: ${formatNum(c.tokensBefore)} → ${formatNum(c.tokensAfter)} tokens">
+                  <span class="swatch sw-compaction"></span>
+                  <span class="cat-label">#${idx + 1} · Turn #${c.turnIndex} (${formatCompactNum(c.tokensBefore)} → ${formatCompactNum(c.tokensAfter)})</span>
+                  <span class="cat-tok">-${formatNum(c.tokensSaved)}</span>
+                  <span class="cat-pct">-${pct}%</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </section>
+      `;
+      return;
+    }
+
+    // 5. Global Model Detail SPA Page
+    if (d.type === 'global-model') {
+      const mTot = globalUsageData?.byModel?.[d.modelName];
+      if (!mTot) {
+        closeDetailPage();
+        return;
+      }
+      const mBrand = brandOf(d.modelName);
+      quotaDetailPane.innerHTML = `
+        <div class="detail-page-header">
+          <button type="button" class="pill-btn" data-detail-action="back">← Back</button>
+          <div class="detail-page-title-wrap">
+            <span class="swatch sw-brand-${mBrand}"></span>
+            <span class="detail-page-title">${escapeHtml(d.modelName)}</span>
+          </div>
+          <button type="button" class="pill-btn" data-detail-action="focus-model" data-model-name="${escapeHtml(d.modelName)}">Focus</button>
+        </div>
+
+        <section class="section-block pb-6">
+          <div class="section-header-row">
+            <span class="section-label">Global Model Totals</span>
+            <span class="section-summary-right font-mono">
+              <span class="meta-strong">${formatCompactNum(mTot.totalProcessedTokens || 0)}</span>
+              <span class="turn-count">${mTot.totalTurns || 0} turns</span>
+              <span class="cache-rate">${mTot.cacheEfficiencyPct || '0.0'}% cached</span>
+            </span>
+          </div>
+          ${renderTokenCatRows(mTot)}
+        </section>
+      `;
+      return;
+    }
+
+    // 6. Stored Snapshot Detail SPA Page
+    if (d.type === 'snapshot') {
+      const s = (globalUsageData?.snapshots || []).find(x => x.id === d.snapshotId);
+      if (!s) {
+        closeDetailPage();
+        return;
+      }
+      const st = s.totals || {};
+      const stTotal = st.totalProcessedTokens || 0;
+      const snapModels = Object.entries(s.byModel || {})
+        .sort((a, b) => (b[1].totalProcessedTokens || 0) - (a[1].totalProcessedTokens || 0));
+
+      quotaDetailPane.innerHTML = `
+        <div class="detail-page-header">
+          <button type="button" class="pill-btn" data-detail-action="back">← Back</button>
+          <div class="detail-page-title-wrap">
+            <span class="swatch sw-input"></span>
+            <span class="detail-page-title">${escapeHtml(s.name)}</span>
+          </div>
+          <button type="button" class="pill-btn danger-pill" data-detail-action="delete-snapshot" data-snap-id="${escapeHtml(s.id)}">Delete</button>
+        </div>
+
+        <section class="section-block">
+          <div class="section-header-row">
+            <span class="section-label">Snapshot Totals</span>
+            <span class="section-summary-right font-mono">
+              <span class="meta-strong">${formatCompactNum(stTotal)}</span>
+              <span class="turn-count">${st.totalTurns || 0} turns</span>
+            </span>
+          </div>
+          <div class="meta-subtle font-mono">Saved ${escapeHtml(new Date(s.createdAt).toLocaleString())}</div>
+          ${renderTokenCatRows(st)}
+        </section>
+
+        ${snapModels.length ? `
+          <section class="section-block pb-6">
+            <div class="section-header-row">
+              <span class="section-label">By Model</span>
+              <span class="meta-subtle font-mono">${snapModels.length} model${snapModels.length === 1 ? '' : 's'}</span>
+            </div>
+            <div class="cat-list font-mono">
+              ${snapModels.map(([mName, mt]) => `
+                <div class="cat-row">
+                  <span class="swatch sw-brand-${brandOf(mName)}"></span>
+                  <span class="cat-label">${escapeHtml(mName)}</span>
+                  <span class="cat-tok">${formatNum(mt.totalProcessedTokens || 0)}</span>
+                  <span class="cat-pct">${pctStr(mt.totalProcessedTokens || 0, stTotal)}</span>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+        ` : ''}
+      `;
+    }
   }
 
   // ---------- Global Usage Rendering ----------
@@ -1644,6 +1944,7 @@
     renderQuotaPoolsInto(sessionQuotaPoolsList, data.quotaPools || [], selectedModel);
     renderQuotaPoolsInto(quotaPoolsList, data.quotaPools || [], selectedModel);
     if (currentTelemetry) renderCodingHud();
+    if (activeDetailPage) renderDetailPage();
 
     const filtered = selectedModel !== 'all' ? (data.byModel?.[selectedModel] || null) : null;
     const tot = filtered || data.current || {};
@@ -1680,7 +1981,7 @@
     if (globalOutputTotal) globalOutputTotal.textContent = formatNum(gResp);
     if (globalOutputPct) globalOutputPct.textContent = pctStr(gResp, totalProc);
 
-    // Per-Model Breakdown
+    // Per-Model Breakdown (.cat-list / .cat-row design without pills)
     const modelEntries = Object.entries(data.byModel || {})
       .sort((a, b) => (b[1].totalProcessedTokens || 0) - (a[1].totalProcessedTokens || 0));
     if (globalModelCountVal) globalModelCountVal.textContent = `${modelEntries.length} model${modelEntries.length === 1 ? '' : 's'}`;
@@ -1690,19 +1991,20 @@
         globalModelsList.innerHTML = `<div class="empty-state">No model usage recorded since reset.</div>`;
       } else {
         globalModelsList.innerHTML = modelEntries.map(([mName, mTot]) => `
-          <div class="global-model-row">
-            <span class="routing-pill ${getModelPillClass(mName)}">${escapeHtml(mName)}</span>
-            <span class="global-model-right">
-              <span>${mTot.totalTurns || 0}t</span>
-              <span class="cache-rate">${mTot.cacheEfficiencyPct || '0.0'}%</span>
-              <span class="meta-strong">${formatCompactNum(mTot.totalProcessedTokens || 0)}</span>
+          <div class="cat-row tool-tree-toggle" data-global-model="${escapeHtml(mName)}" role="button" tabindex="0" title="Click to inspect ${escapeHtml(mName)} breakdown">
+            <span class="swatch sw-brand-${brandOf(mName)}"></span>
+            <span class="cat-label-chev">
+              <span class="cat-label">${escapeHtml(mName)}</span>
+              <svg class="tree-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
             </span>
+            <span class="cat-tok">${formatNum(mTot.totalProcessedTokens || 0)}</span>
+            <span class="cat-pct">${pctStr(mTot.totalProcessedTokens || 0, totalProc)}</span>
           </div>
         `).join('');
       }
     }
 
-    // Stored Snapshots
+    // Stored Snapshots (.cat-list / .cat-row design)
     const snaps = data.snapshots || [];
     if (snapshotsCountVal) snapshotsCountVal.textContent = `${snaps.length} saved`;
     if (snapshotsList) {
@@ -1712,37 +2014,15 @@
         snapshotsList.innerHTML = snaps.map(s => {
           const st = s.totals || {};
           const stTotal = st.totalProcessedTokens || 0;
-          const isOpen = expandedSnapshotIds.has(s.id);
-          const snapModels = Object.entries(s.byModel || {})
-            .sort((a, b) => (b[1].totalProcessedTokens || 0) - (a[1].totalProcessedTokens || 0));
-          const snapModelsHtml = snapModels.length
-            ? `<div class="snapshot-models">${snapModels.map(([mName, mt]) => `
-                <div class="item-ledger-row">
-                  <span class="routing-pill ${getModelPillClass(mName)}">${escapeHtml(mName)}</span>
-                  <span class="item-ledger-val">${formatCompactNum(mt.totalProcessedTokens || 0)} · ${mt.totalTurns || 0}t</span>
-                </div>
-              `).join('')}</div>`
-            : '';
           return `
-            <div class="snapshot-item${isOpen ? ' expanded' : ''}" data-snap-id="${escapeHtml(s.id)}">
-              <div class="snapshot-top">
-                <span class="snapshot-name">${s.auto ? '<span class="auto-pill">AUTO</span>' : ''}${escapeHtml(s.name)}</span>
-                <span class="snapshot-right">
-                  <span class="meta-strong">${formatCompactNum(stTotal)}</span>
-                  <span>${st.totalTurns || 0}t</span>
-                  <button type="button" class="snapshot-del-btn" data-del-snap="${escapeHtml(s.id)}" title="Delete snapshot">✕</button>
-                </span>
-              </div>
-              <div class="snapshot-details">
-                ${renderLedgerRows([
-                  { dot: 'dot-cache', label: 'Cache Read', value: formatNum(st.cacheReadTokens || 0), valClass: 'val-cache' },
-                  { dot: 'dot-input', label: 'New Input', value: formatNum(st.inputTokens || 0) },
-                  { dot: 'dot-think', label: 'Thinking', value: formatNum(st.thinkingTokens || 0), valClass: 'val-think' },
-                  { dot: 'dot-output', label: 'Response & Tools', value: formatNum(st.responseTokens || 0) },
-                  { dot: 'dot-total', label: 'Saved', value: new Date(s.createdAt).toLocaleString() }
-                ])}
-                ${snapModelsHtml}
-              </div>
+            <div class="cat-row tool-tree-toggle" data-snap-id="${escapeHtml(s.id)}" role="button" tabindex="0" title="Click to inspect snapshot ${escapeHtml(s.name)}">
+              <span class="swatch ${s.auto ? 'sw-think' : 'sw-input'}"></span>
+              <span class="cat-label-chev">
+                <span class="cat-label">${escapeHtml(s.name)}</span>
+                <svg class="tree-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+              </span>
+              <span class="cat-tok">${formatNum(stTotal)}</span>
+              <span class="cat-pct">${st.totalTurns || 0}t</span>
             </div>
           `;
         }).join('');
@@ -2170,9 +2450,8 @@
   // ---------- Tab Switching ----------
   function switchTab(tab) {
     activeTab = tab;
-    if (tabSession) tabSession.classList.toggle('hidden', tab !== 'session');
-    if (tabAgents) tabAgents.classList.toggle('hidden', tab !== 'agents');
-    if (tabGlobal) tabGlobal.classList.toggle('hidden', tab !== 'global');
+    activeDetailPage = null;
+    syncActivePanes();
 
     [tabSessionBtn, tabAgentsBtn, tabGlobalBtn].forEach(btn => {
       if (!btn) return;
@@ -2206,73 +2485,92 @@
       if (activeTab !== 'global' && currentTelemetry) {
         renderDashboard(currentTelemetry);
       }
+      if (activeDetailPage) renderDetailPage();
     });
   }
 
-  // Click any quota pool (on Session or Global tab) or model action
+  // Click any quota pool row (on Session or Global tab) to open its SPA Detail Page
   [sessionQuotaPoolsList, quotaPoolsList].forEach((container) => {
     if (!container) return;
     container.addEventListener('click', (e) => {
-      // 1. Clear model focus button
-      const clearBtn = e.target.closest('[data-quota-action="clear-model"]');
-      if (clearBtn) {
-        e.stopPropagation();
-        selectedModel = 'all';
-        if (modelFilterSelect) modelFilterSelect.value = 'all';
-        if (globalUsageData) {
-          renderQuotaPoolsInto(sessionQuotaPoolsList, globalUsageData.quotaPools || [], 'all');
-          renderQuotaPoolsInto(quotaPoolsList, globalUsageData.quotaPools || [], 'all');
-        }
-        if (activeTab !== 'global' && currentTelemetry) renderDashboard(currentTelemetry);
+      const row = e.target.closest('.quota-pool-row');
+      const pid = row?.dataset?.poolId;
+      if (!pid) return;
+      openDetailPage({ type: 'pool', poolId: pid });
+    });
+    container.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = e.target.closest('.quota-pool-row');
+      const pid = row?.dataset?.poolId;
+      if (!pid) return;
+      e.preventDefault();
+      openDetailPage({ type: 'pool', poolId: pid });
+    });
+  });
+
+  // Click inside SPA Detail Page (#quotaDetailPane)
+  if (quotaDetailPane) {
+    quotaDetailPane.addEventListener('click', async (e) => {
+      const actEl = e.target.closest('[data-detail-action]');
+      if (!actEl) return;
+      const action = actEl.dataset.detailAction;
+
+      if (action === 'back') {
+        closeDetailPage();
         return;
       }
-
-      // 2. Focus model button
-      const focusBtn = e.target.closest('[data-quota-action="focus-model"]');
-      if (focusBtn) {
-        e.stopPropagation();
-        const fMod = focusBtn.dataset.focusModel;
+      if (action === 'back-to-pool') {
+        openDetailPage({ type: 'pool', poolId: actEl.dataset.poolId });
+        return;
+      }
+      if (action === 'open-pool-model') {
+        openDetailPage({
+          type: 'pool-model',
+          poolId: actEl.dataset.poolId,
+          modelName: actEl.dataset.modelName
+        });
+        return;
+      }
+      if (action === 'open-tool-targets') {
+        openDetailPage({
+          type: 'tool-targets',
+          toolName: actEl.dataset.toolName
+        });
+        return;
+      }
+      if (action === 'back-to-tools') {
+        openDetailPage({ type: 'tools' });
+        return;
+      }
+      if (action === 'focus-model') {
+        const fMod = actEl.dataset.modelName;
         if (fMod) {
           selectedModel = fMod;
           updateModelDropdown();
           if (modelFilterSelect) modelFilterSelect.value = fMod;
-          if (globalUsageData) {
-            renderQuotaPoolsInto(sessionQuotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
-            renderQuotaPoolsInto(quotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
-          }
+          closeDetailPage();
+          if (globalUsageData) renderGlobalView(globalUsageData);
           if (activeTab !== 'global' && currentTelemetry) renderDashboard(currentTelemetry);
         }
         return;
       }
-
-      // 3. Toggle model drill-down
-      const toggleModel = e.target.closest('[data-quota-action="toggle-model"]');
-      if (toggleModel) {
-        e.stopPropagation();
-        const mKey = toggleModel.dataset.modelKey;
-        if (mKey) {
-          if (expandedQuotaModelNames.has(mKey)) expandedQuotaModelNames.delete(mKey);
-          else expandedQuotaModelNames.add(mKey);
-          if (globalUsageData) {
-            renderQuotaPoolsInto(sessionQuotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
-            renderQuotaPoolsInto(quotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
-          }
+      if (action === 'delete-snapshot') {
+        const id = actEl.dataset.snapId;
+        if (!id) return;
+        try {
+          await fetch(apiUrl('/api/global/snapshot/delete'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+          });
+          closeDetailPage();
+          await fetchGlobalUsage();
+        } catch (err) {
+          console.error('Delete snapshot failed:', err);
         }
-        return;
-      }
-
-      // 4. Toggle entire quota pool item
-      const item = e.target.closest('.quota-pool-item');
-      const pid = item?.dataset?.poolId;
-      if (!pid) return;
-      if (expandedQuotaPoolIds.has(pid)) expandedQuotaPoolIds.delete(pid);
-      else expandedQuotaPoolIds.add(pid);
-      if (globalUsageData) {
-        renderQuotaPoolsInto(sessionQuotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
-        renderQuotaPoolsInto(quotaPoolsList, globalUsageData.quotaPools || [], selectedModel);
       }
     });
-  });
+  }
 
   // ---------- Agents Interactions ----------
   if (agentsList) {
@@ -2295,48 +2593,39 @@
     });
   }
 
-  // ---------- Tool Calls 3-Level Interactions ----------
+  // ---------- Deep Drill-Down Openers (Compactions, Tool Calls, Global Models, Snapshots) ----------
   if (compactionToggleRow) {
     compactionToggleRow.addEventListener('click', (e) => {
       e.stopPropagation();
-      compactionTreeExpanded = !compactionTreeExpanded;
-      if (currentTelemetry) renderDashboard(currentTelemetry);
+      openDetailPage({ type: 'compactions' });
     });
     compactionToggleRow.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       e.preventDefault();
       e.stopPropagation();
-      compactionTreeExpanded = !compactionTreeExpanded;
-      if (currentTelemetry) renderDashboard(currentTelemetry);
+      openDetailPage({ type: 'compactions' });
     });
   }
 
   if (toolCallsRootRow) {
     toolCallsRootRow.addEventListener('click', (e) => {
       e.stopPropagation();
-      toolTreeExpanded = !toolTreeExpanded;
-      if (currentTelemetry) {
-        const filteredModel = selectedModel !== 'all' ? currentTelemetry.modelStats?.[selectedModel] : null;
-        const summary = filteredModel
-          ? (currentTelemetry.toolCalls?.byModel?.[filteredModel.displayName] || { totalCalls: 0, tools: [] })
-          : (currentTelemetry.toolCalls || { totalCalls: 0, tools: [] });
-        renderToolCallsTree(summary);
-      }
+      openDetailPage({ type: 'tools' });
+    });
+    toolCallsRootRow.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      e.stopPropagation();
+      openDetailPage({ type: 'tools' });
     });
   }
 
-  if (toolCallsTree) {
-    toolCallsTree.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const row = e.target.closest('.tool-node-row');
-      const node = row?.closest('.tool-node');
-      const toolName = node?.dataset?.toolName;
-      if (!toolName) return;
-      if (expandedToolNames.has(toolName)) expandedToolNames.delete(toolName);
-      else expandedToolNames.add(toolName);
-      const isOpen = expandedToolNames.has(toolName);
-      node.classList.toggle('expanded', isOpen);
-      row.setAttribute('aria-expanded', String(isOpen));
+  if (globalModelsList) {
+    globalModelsList.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-global-model]');
+      const mName = row?.dataset?.globalModel;
+      if (!mName) return;
+      openDetailPage({ type: 'global-model', modelName: mName });
     });
   }
 
@@ -2436,30 +2725,11 @@
   }
 
   if (snapshotsList) {
-    snapshotsList.addEventListener('click', async (e) => {
-      const delBtn = e.target.closest('[data-del-snap]');
-      if (delBtn) {
-        e.stopPropagation();
-        const id = delBtn.dataset.delSnap;
-        try {
-          await fetch(apiUrl('/api/global/snapshot/delete'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id })
-          });
-          expandedSnapshotIds.delete(id);
-          await fetchGlobalUsage();
-        } catch (err) {
-          console.error('Delete snapshot failed:', err);
-        }
-        return;
-      }
-      const item = e.target.closest('.snapshot-item');
+    snapshotsList.addEventListener('click', (e) => {
+      const item = e.target.closest('[data-snap-id]');
       const id = item?.dataset?.snapId;
       if (!id) return;
-      if (expandedSnapshotIds.has(id)) expandedSnapshotIds.delete(id);
-      else expandedSnapshotIds.add(id);
-      item.classList.toggle('expanded', expandedSnapshotIds.has(id));
+      openDetailPage({ type: 'snapshot', snapshotId: id });
     });
   }
 
@@ -2471,6 +2741,7 @@
     if (!['full', 'simple', 'hud'].includes(nextMode)) nextMode = 'full';
     viewMode = nextMode;
     simpleMode = viewMode === 'simple';
+    if (activeDetailPage) closeDetailPage();
     try {
       localStorage.setItem('token_meter_view_mode', viewMode);
       localStorage.setItem('token_meter_simple_mode', String(simpleMode));

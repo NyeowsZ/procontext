@@ -271,7 +271,7 @@
             <span class="badge account-badge font-mono" id="sessionAccountBadge">Loading…</span>
           </div>
           <div class="section-body">
-            <div id="sessionQuotaPoolsList" class="quota-pools-list font-mono">
+            <div id="sessionQuotaPoolsList" class="quota-pools-list cat-list font-mono">
               <div class="empty-state">Loading 5h &amp; weekly quotas…</div>
             </div>
           </div>
@@ -495,7 +495,7 @@
             <span class="section-label">Account &amp; Quotas</span>
             <span class="badge account-badge font-mono" id="globalAccountBadge">Loading account…</span>
           </div>
-          <div id="quotaPoolsList" class="quota-pools-list font-mono">
+          <div id="quotaPoolsList" class="quota-pools-list cat-list font-mono">
             <div class="empty-state">Loading 5h &amp; weekly quotas…</div>
           </div>
         </section>
@@ -559,7 +559,7 @@
             <span class="section-label">By Model</span>
             <span class="meta-subtle font-mono" id="globalModelCountVal">0 models</span>
           </div>
-          <div id="globalModelsList" class="global-models-list font-mono">
+          <div id="globalModelsList" class="global-models-list cat-list font-mono">
             <div class="empty-state">No model usage recorded yet.</div>
           </div>
         </section>
@@ -570,11 +570,14 @@
             <span class="section-label">Stored Snapshots</span>
             <span class="meta-subtle font-mono" id="snapshotsCountVal">0 saved</span>
           </div>
-          <div id="snapshotsList" class="snapshots-list font-mono">
+          <div id="snapshotsList" class="snapshots-list cat-list font-mono">
             <div class="empty-state">No snapshots stored yet.</div>
           </div>
         </section>
       </div>
+
+      <!-- ============ QUOTA / MODEL DETAIL SPA PAGE ============ -->
+      <div id="quotaDetailPane" class="tab-pane hidden"></div>
 
     </main>
   </div>

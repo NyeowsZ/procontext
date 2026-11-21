@@ -1534,6 +1534,41 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .brand-gemini { --brand: var(--brand-gemini); }
 .brand-argon { --brand: var(--brand-argon); }
 .brand-other { --brand: var(--brand-other); }
+.sw-brand-claude { background: var(--brand-claude); }
+.sw-brand-gpt { background: var(--brand-gpt); }
+.sw-brand-gemini { background: var(--brand-gemini); }
+.sw-brand-argon { background: var(--brand-argon); }
+.sw-brand-other { background: var(--brand-other); }
+.quota-pools-list.cat-list { gap: 0; }
+.quota-row-pct.ok { color: var(--tm-ok); font-weight: 500; }
+.quota-row-pct.warn { color: var(--tm-warn); font-weight: 500; }
+.quota-row-pct.crit { color: var(--tm-crit); font-weight: 500; }
+
+/* SPA Detail Sub-Page Header */
+.detail-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--cx-border);
+}
+.detail-page-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.detail-page-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cx-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .routing-pill[class*="brand-"] {
   color: var(--brand);
   background: color-mix(in srgb, var(--brand) 14%, transparent);

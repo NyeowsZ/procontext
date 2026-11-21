@@ -56,15 +56,12 @@
   const SIMPLE_TELEMETRY_LIMIT = 5;
   let compactAlarmK = parseFloat(localStorage.getItem('token_meter_compact_alarm_k') ?? '250');
   if (!isFinite(compactAlarmK) || compactAlarmK < 0) compactAlarmK = 250;
-  let defaultItemsCompact = localStorage.getItem('token_meter_items_default_compact') === 'true';
+  // Default all telemetry items to compacted on load
+  let defaultItemsCompact = true;
   let itemCompactOverrides = new Set();
-  try {
-    itemCompactOverrides = new Set(JSON.parse(localStorage.getItem('token_meter_compacted_overrides') || '[]'));
-  } catch {}
   function saveCompacted() {
     try {
       localStorage.setItem('token_meter_items_default_compact', String(defaultItemsCompact));
-      localStorage.setItem('token_meter_compacted_overrides', JSON.stringify([...itemCompactOverrides].slice(-200)));
     } catch {}
   }
   function itemKey(kind, num) {

@@ -1029,14 +1029,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
   min-width: 0;
 }
 .cache-lifespan-stat {
-  color: var(--cx-fg-muted);
+  color: var(--cx-fg);
   font-weight: 500;
   white-space: nowrap;
   flex-shrink: 0;
 }
-.cache-lifespan-stat.warm { color: var(--tm-ok); }
-.cache-lifespan-stat.expiring { color: var(--tm-warn); }
-.cache-lifespan-stat.cold { color: var(--tm-crit); }
 
 
 /* ---------- Telemetry ---------- */
@@ -1439,22 +1436,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .section-toggle-header:hover { background: var(--cx-hover); }
 .section-toggle-header:active { background: var(--cx-press); }
 .section-toggle-header:focus-visible { outline: 2px solid var(--cx-ring); outline-offset: 1px; }
-/* Cache TTL: value-only pill, details on hover */
+/* Cache TTL: plain bound text + single countdown pill, details on hover */
 .cache-lifespan-stat {
-  padding: 0 7px;
-  border-radius: 999px;
-  line-height: 18px;
-  background: var(--cx-fill);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cx-fg);
   cursor: help;
-  transition: background-color 140ms var(--ease-out), filter 140ms var(--ease-out);
 }
-.cache-lifespan-stat:hover { background: var(--cx-track); }
-.cache-lifespan-stat.warm { background: color-mix(in srgb, var(--tm-ok) 12%, transparent); }
-.cache-lifespan-stat.expiring { background: color-mix(in srgb, var(--tm-warn) 12%, transparent); }
-.cache-lifespan-stat.cold { background: color-mix(in srgb, var(--tm-crit) 12%, transparent); }
-.cache-lifespan-stat.warm:hover { background: color-mix(in srgb, var(--tm-ok) 22%, transparent); }
-.cache-lifespan-stat.expiring:hover { background: color-mix(in srgb, var(--tm-warn) 22%, transparent); }
-.cache-lifespan-stat.cold:hover { background: color-mix(in srgb, var(--tm-crit) 22%, transparent); }
 /* Account & Quotas: grouped by window */
 .quota-pools-list { gap: 10px; }
 .quota-group { display: flex; flex-direction: column; gap: 2px; }

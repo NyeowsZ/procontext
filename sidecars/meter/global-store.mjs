@@ -496,47 +496,7 @@ function evaluateQuotaCycles(accountBucket, quotaPools, allTimeTotals, allTimeBy
       mutated = true;
     }
 
-    const hit100Used = pool.usedPct >= 99.5 && existing.autoSnapshottedForResetTime !== pool.resetTime;
-    const cycleReset = existing.lastResetTime && existing.lastResetTime !== pool.resetTime && existing.autoSnapshottedForResetTime !== existing.lastResetTime;
-    const cycleDeltaTotals = subtractTotals(allTimeTotals, existing.cycleStartTotals);
-    const cycleDeltaByModel = diffByModel(allTimeByModel, existing.cycleStartByModel);
-    const hadActivity = cycleDeltaTotals.totalProcessedTokens > 0 || (existing.lastUsedPct || 0) >= 5;
-
-    if (hit100Used || (cycleReset && hadActivity)) {
-      const tag = hit100Used ? 'Auto 100%' : 'Auto Reset';
-      const winLabel = pool.windowType === 'weekly' ? 'Weekly' : '5h';
-      const snap = {
-        id: `auto_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        auto: true,
-        poolId: pool.poolId,
-        poolLabel: pool.label,
-        windowType: pool.windowType,
-        name: `[${tag}] ${pool.label} (${winLabel}) · ${formatAutoDateName()}`,
-        createdAt: nowIso,
-        cycleStartAt: existing.cycleStartAt || nowIso,
-        cycleEndAt: nowIso,
-        conversationCount,
-        totals: cycleDeltaTotals.totalProcessedTokens > 0
-          ? cycleDeltaTotals
-          : subtractTotals(allTimeTotals, accountBucket.baseline?.totals),
-        byModel: Object.keys(cycleDeltaByModel).length
-          ? cycleDeltaByModel
-          : diffByModel(allTimeByModel, accountBucket.baseline?.byModel)
-      };
-
-      accountBucket.snapshots.unshift(snap);
-      if (accountBucket.snapshots.length > 120) {
-        accountBucket.snapshots = accountBucket.snapshots.slice(0, 120);
-      }
-
-      // Advance cycle baseline for the next 100% -> 100% period
-      existing.cycleStartAt = nowIso;
-      existing.cycleStartTotals = { ...allTimeTotals };
-      existing.cycleStartByModel = cloneTotalsMap(allTimeByModel);
-      existing.autoSnapshottedForResetTime = hit100Used ? pool.resetTime : existing.lastResetTime;
-      mutated = true;
-    }
-
+    // Auto-reset snapshot creation removed (caused fragmented snapshots on resetTime drift).
     if (existing.lastResetTime !== pool.resetTime || existing.lastUsedPct !== pool.usedPct) {
       existing.lastResetTime = pool.resetTime;
       existing.lastUsedPct = pool.usedPct;

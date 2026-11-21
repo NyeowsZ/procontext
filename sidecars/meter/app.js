@@ -737,7 +737,7 @@
       return;
     }
 
-    containerEl.innerHTML = list.map(p => {
+    const renderPool = (p) => {
       const used = Math.min(100, Math.max(0, p.usedPct || 0));
       const barColor = used >= 80 ? 'var(--tm-crit)' : (used >= 50 ? 'var(--tm-warn)' : 'var(--tm-ok)');
       const winTag = p.windowType === 'weekly' ? 'Weekly' : '5h';
@@ -874,23 +874,42 @@
         ? `~${formatCompactNum(corr.per1Pct.totalProcessedTokens)}/1% · ${resetLabel}`
         : resetLabel;
 
+      const modelCount = (p.models || []).length;
+      const modelsTitle = modelCount ? `Models sharing this quota (${modelCount}):\n${p.models.join('\n')}` : '';
+      const barState = used >= 80 ? 'crit' : (used >= 50 ? 'warn' : 'ok');
+      const burn = corr?.hasData && corr.per1Pct ? `~${formatCompactNum(corr.per1Pct.totalProcessedTokens)} / 1%` : '';
       return `
-        <div class="quota-pool-item${isOpen ? ' expanded' : ''}" data-pool-id="${escapeHtml(p.poolId)}" title="Click to expand per-1% token breakdown & estimates">
+        <div class="quota-pool-item${isOpen ? ' expanded' : ''}" data-pool-id="${escapeHtml(p.poolId)}">
           <div class="quota-pool-top">
             <span class="quota-pool-left">
-              <span class="quota-pool-label">${escapeHtml(p.label)}</span>
-              <span class="quota-win-pill ${p.windowType === 'weekly' ? 'weekly' : ''}">${winTag}</span>
+              <span class="quota-pool-label" title="${escapeHtml(p.label)}">${escapeHtml(p.label)}</span>
+              ${modelCount ? `<span class="quota-model-count" title="${escapeHtml(modelsTitle)}">${modelCount}</span>` : ''}
             </span>
-            <span class="meta-strong" style="color: ${barColor}">${used.toFixed(1)}% used</span>
+            <span class="quota-pool-pct ${barState}">${used.toFixed(1)}%</span>
           </div>
           <div class="quota-pool-bar">
-            <div class="quota-pool-fill" style="width: ${used}%; background: ${barColor}"></div>
+            <div class="quota-pool-fill ${barState}" style="width: ${used}%"></div>
           </div>
           <div class="quota-pool-sub">
-            <span>${p.remainingPct.toFixed(1)}% left</span>
-            <span>${escapeHtml(subRight)}</span>
+            <span>${p.remainingPct.toFixed(1)}% left${resetLabel ? ` · ${escapeHtml(resetLabel)}` : ''}</span>
+            <span>${escapeHtml(burn)}</span>
           </div>
           <div class="quota-pool-details">${detailsHtml}</div>
+        </div>
+      `;
+    };
+
+    const windows = [
+      { type: '5h', title: '5-Hour Window' },
+      { type: 'weekly', title: 'Weekly Window' }
+    ];
+    containerEl.innerHTML = windows.map(w => {
+      const pools = list.filter(p => (p.windowType === 'weekly' ? 'weekly' : '5h') === w.type);
+      if (!pools.length) return '';
+      return `
+        <div class="quota-group">
+          <div class="quota-group-head"><span>${w.title}</span><span class="quota-group-count">${pools.length} pool${pools.length === 1 ? '' : 's'}</span></div>
+          ${pools.map(renderPool).join('')}
         </div>
       `;
     }).join('');

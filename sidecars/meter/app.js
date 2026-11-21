@@ -719,6 +719,27 @@
     return `${mins}m`;
   }
 
+  const BRAND_NAMES = { claude: 'Claude', gpt: 'GPT', gemini: 'Gemini', argon: 'Argon', other: 'Other' };
+  function brandOf(name) {
+    const l = String(name || '').toLowerCase();
+    if (/claude|opus|sonnet|haiku|anthropic/.test(l)) return 'claude';
+    if (/gpt|openai|\bo[134]\b/.test(l)) return 'gpt';
+    if (/argon|neon|orchestrator/.test(l)) return 'argon';
+    if (/gemini|flash|pro\b/.test(l)) return 'gemini';
+    return 'other';
+  }
+  function renderBrandChips(models) {
+    const groups = new Map();
+    for (const m of models || []) {
+      const b = brandOf(m);
+      if (!groups.has(b)) groups.set(b, []);
+      groups.get(b).push(m);
+    }
+    return [...groups.entries()].map(([b, ms]) =>
+      `<span class="brand-chip brand-${b}" title="${escapeHtml(ms.join('\n'))}"><i></i>${BRAND_NAMES[b]}${ms.length > 1 ? ` <b>${ms.length}</b>` : ''}</span>`
+    ).join('');
+  }
+
   function renderQuotaPoolsInto(containerEl, pools, filterModel) {
     if (!containerEl) return;
     let list = pools || [];
@@ -828,7 +849,7 @@
                   <div class="quota-model-row" data-quota-action="toggle-model" data-model-key="${escapeHtml(mKey)}">
                     <span class="quota-model-left">
                       <svg class="tree-chev" width="10" height="10" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
-                      <span class="routing-pill ${getModelPillClass(m.model)}">${escapeHtml(m.model)}</span>
+                      <span class="routing-pill brand-${brandOf(m.model)}">${escapeHtml(m.model)}</span>
                     </span>
                     <span class="quota-model-right">
                       <span class="quota-model-share">${formatCompactNum(m.totalProcessedTokens)} · ${m.sharePct}%</span>
@@ -879,11 +900,11 @@
       const barState = used >= 80 ? 'crit' : (used >= 50 ? 'warn' : 'ok');
       const burn = corr?.hasData && corr.per1Pct ? `~${formatCompactNum(corr.per1Pct.totalProcessedTokens)} / 1%` : '';
       return `
-        <div class="quota-pool-item${isOpen ? ' expanded' : ''}" data-pool-id="${escapeHtml(p.poolId)}">
+        <div class="quota-pool-item brand-${brandOf((p.models || [])[0] || p.label)}${isOpen ? ' expanded' : ''}" style="--brand2: var(--brand-${brandOf((p.models || []).find(m => brandOf(m) !== brandOf((p.models || [])[0])) || (p.models || [])[0] || p.label)})" data-pool-id="${escapeHtml(p.poolId)}">
           <div class="quota-pool-top">
             <span class="quota-pool-left">
               <span class="quota-pool-label" title="${escapeHtml(p.label)}">${escapeHtml(p.label)}</span>
-              ${modelCount ? `<span class="quota-model-count" title="${escapeHtml(modelsTitle)}">${modelCount}</span>` : ''}
+              ${modelCount ? `<span class="quota-brand-chips" title="${escapeHtml(modelsTitle)}">${renderBrandChips(p.models)}</span>` : ''}
             </span>
             <span class="quota-pool-pct ${barState}">${used.toFixed(1)}%</span>
           </div>

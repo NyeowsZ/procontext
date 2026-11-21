@@ -1498,3 +1498,41 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #secActiveTurn #turnCachePct,
 #secActiveTurn #turnCacheReadVal + .cat-pct { color: var(--tm-cache); font-weight: 600; }
 #secActiveTurn .cat-row:has(#turnCacheReadVal) .cat-label { color: var(--tm-cache); }
+
+/* Brand colors for AI vendors (quota pools, model pills) */
+:root {
+  --brand-claude: #d97757;
+  --brand-gpt: #10a37f;
+  --brand-gemini: #4285f4;
+  --brand-argon: var(--tm-argon);
+  --brand-other: var(--cx-fg-muted);
+}
+.brand-claude { --brand: var(--brand-claude); }
+.brand-gpt { --brand: var(--brand-gpt); }
+.brand-gemini { --brand: var(--brand-gemini); }
+.brand-argon { --brand: var(--brand-argon); }
+.brand-other { --brand: var(--brand-other); }
+.routing-pill[class*="brand-"] {
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+}
+.brand-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 6px; border-radius: 999px;
+  font-size: 10px; font-weight: 500; line-height: 14px;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+  cursor: help; white-space: nowrap;
+}
+.brand-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
+.brand-chip b { font-weight: 600; opacity: 0.8; }
+.quota-brand-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.quota-pool-item { position: relative; }
+.quota-group .quota-pool-item { padding-left: 12px; }
+.quota-group .quota-pool-item::before {
+  content: ''; position: absolute; left: 4px; top: 8px; bottom: 8px; width: 3px; border-radius: 3px;
+  background: linear-gradient(to bottom, var(--brand, var(--cx-border)), var(--brand2, var(--brand, var(--cx-border))));
+  opacity: 0.85;
+}
+.quota-group-head { padding-left: 0; }
+.quota-pool-label { font-weight: 600; }

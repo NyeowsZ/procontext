@@ -376,9 +376,39 @@ export async function getCurrentAccount() {
   }
 }
 
+const QUOTA_WEEKLY_THRESHOLD_HOURS = 8;
+const SERIES_STOPWORDS = new Set(['flash', 'lite', 'pro', 'image', 'orchestrator', 'tiered', 'sonar', 'preview', 'worker', 'high', 'medium', 'low', 'xhigh', 'thinking', 'disabled']);
+
+function isRawModelKey(name) {
+  // Un-named models fall back to their raw key (e.g. "gemini-3.8-flash-tiered")
+  return /^[a-z0-9_.-]+$/.test(name) && /[-_]/.test(name);
+}
+
+function stripVariant(name) {
+  return name.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function brandOf(name) {
+  const first = stripVariant(name).split(' ')[0] || '';
+  return first.toLowerCase() === 'orchestrator' ? '' : first;
+}
+
+function seriesWordsOf(name, brand) {
+  // Codename words (e.g. "Hydrogen", "Neon", "Argon") taken from model names, never hardcoded
+  const text = name.replace(/[()]/g, ' ');
+  return text.split(/\s+/)
+    .filter(w => /^[A-Za-z]{3,}$/.test(w) && w.toLowerCase() !== brand.toLowerCase() && !SERIES_STOPWORDS.has(w.toLowerCase()));
+}
+
+function slugify(s) {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'pool';
+}
+
 /**
- * Groups available models into their live quota pools (5-hour vs Weekly windows)
- * using quotaInfo.remainingFraction and quotaInfo.resetTime from GetAvailableModels.
+ * Groups available models into their live quota pools (5-hour vs Weekly windows).
+ * Models that report the same remainingFraction AND the same resetTime share one
+ * quota pool, so grouping is derived purely from live data (no hardcoded families).
+ * Pool labels are generated from the member models' names.
  */
 export async function getQuotaPools(forceRefresh = false) {
   const models = await getModelLimits(forceRefresh);
@@ -391,57 +421,55 @@ export async function getQuotaPools(forceRefresh = false) {
     const displayName = (def.displayName || key).trim();
     const resetMs = Date.parse(qi.resetTime);
     if (Number.isNaN(resetMs)) continue;
+    const remFrac = Math.min(1, Math.max(0, Number(qi.remainingFraction)));
+    if (Number.isNaN(remFrac)) continue;
 
     const hoursUntilReset = (resetMs - nowMs) / 3600000;
-    const windowType = hoursUntilReset > 8 ? 'weekly' : '5h';
+    const windowType = hoursUntilReset > QUOTA_WEEKLY_THRESHOLD_HOURS ? 'weekly' : '5h';
 
-    // Determine family key so pools stay stable even when resetTime advances
-    const lower = `${key} ${displayName}`.toLowerCase();
-    let family = 'other';
-    let familyLabel = 'Other Models';
-    if (lower.includes('claude') || lower.includes('gpt')) {
-      family = 'claude-gpt';
-      familyLabel = 'Claude / GPT';
-    } else if (lower.includes('argon')) {
-      family = 'gemini-argon';
-      familyLabel = 'Gemini Argon';
-    } else if (lower.includes('gemini') || lower.includes('neon') || lower.includes('hydrogen') || lower.includes('flash')) {
-      family = 'gemini-flash-neon';
-      familyLabel = 'Gemini Flash / Neon';
-    }
-
-    const poolId = `${windowType}:${family}`;
-    let bucket = buckets.get(poolId);
+    // Pool identity = same window + same reset minute + same remaining fraction
+    const signature = `${windowType}|${Math.round(resetMs / 60000)}|${remFrac.toFixed(4)}`;
+    let bucket = buckets.get(signature);
     if (!bucket) {
-      bucket = {
-        poolId,
-        label: familyLabel,
-        windowType,
-        remainingFraction: Number(qi.remainingFraction),
-        resetTime: qi.resetTime,
-        resetMs,
-        models: []
-      };
-      buckets.set(poolId, bucket);
-    } else {
-      // Keep the tightest remainingFraction in the bucket
-      bucket.remainingFraction = Math.min(bucket.remainingFraction, Number(qi.remainingFraction));
+      bucket = { windowType, remainingFraction: remFrac, resetTime: qi.resetTime, resetMs, models: [], namedModels: [] };
+      buckets.set(signature, bucket);
     }
     if (!bucket.models.includes(displayName)) {
       bucket.models.push(displayName);
+      if (def.displayName && !isRawModelKey(displayName)) bucket.namedModels.push(displayName);
     }
   }
 
-  return Array.from(buckets.values())
-    .map(b => {
-      const remFrac = Math.min(1, Math.max(0, b.remainingFraction));
-      const remainingPct = parseFloat((remFrac * 100).toFixed(1));
-      const usedPct = parseFloat(((1 - remFrac) * 100).toFixed(1));
+  const pools = Array.from(buckets.values()).map(b => {
+    const named = b.namedModels.length ? b.namedModels : b.models;
+    const brands = [...new Set(named.map(brandOf).filter(Boolean))];
+    const series = [...new Set(named.flatMap(n => seriesWordsOf(n, brands[0] || '')))];
+    return { b, brands, series };
+  });
+
+  // Base label from brands; add series codenames when two pools would share a label
+  const baseLabel = ({ brands }) => brands.join(' / ') || 'Other Models';
+  const labelCounts = new Map();
+  pools.forEach(p => labelCounts.set(baseLabel(p), (labelCounts.get(baseLabel(p)) || 0) + 1));
+
+  const usedIds = new Set();
+  return pools
+    .map(p => {
+      const { b } = p;
+      let label = baseLabel(p);
+      if (labelCounts.get(label) > 1 && p.series.length) {
+        label = `${label} · ${p.series.slice(0, 2).join(' / ')}`;
+      }
+      let poolId = `${b.windowType}:${slugify(label)}`;
+      if (usedIds.has(poolId)) poolId = `${poolId}-${Math.round(b.resetMs / 60000)}`;
+      usedIds.add(poolId);
+      const remainingPct = parseFloat((b.remainingFraction * 100).toFixed(1));
+      const usedPct = parseFloat(((1 - b.remainingFraction) * 100).toFixed(1));
       return {
-        poolId: b.poolId,
-        label: b.label,
+        poolId,
+        label,
         windowType: b.windowType,
-        remainingFraction: remFrac,
+        remainingFraction: b.remainingFraction,
         remainingPct,
         usedPct,
         resetTime: b.resetTime,
@@ -454,7 +482,6 @@ export async function getQuotaPools(forceRefresh = false) {
       return b.usedPct - a.usedPct || a.label.localeCompare(b.label);
     });
 }
-
 /**
  * Returns a compact, readable model label suitable for narrow table columns.
  */

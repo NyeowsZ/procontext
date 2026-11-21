@@ -1363,6 +1363,56 @@
     }).join('');
   }
 
+  // ---------- Change pills (+N on significant updates) ----------
+  const DELTA_TARGET_IDS = [
+    'turnCacheReadVal', 'turnNewInputVal', 'turnThinkingVal', 'turnResponseVal', 'toolCallsTotalVal',
+    'sessionCacheTotal', 'sessionInputTotal', 'sessionThinkingTotal', 'sessionOutputTotal'
+  ];
+  const DELTA_MIN_ABS = 100;      // ignore tiny changes
+  const DELTA_MIN_REL = 0.02;     // ...and changes under 2% of the previous value
+  const DELTA_SHOW_MS = 7000;
+
+  function parseDisplayNumber(text) {
+    const m = String(text || '').trim().replace(/,/g, '').match(/^(-?\d+(?:\.\d+)?)\s*([KMBkmb])?/);
+    if (!m) return null;
+    const mult = { k: 1e3, m: 1e6, b: 1e9 }[(m[2] || '').toLowerCase()] || 1;
+    return parseFloat(m[1]) * mult;
+  }
+
+  function showDeltaPill(valueEl, delta, isCount) {
+    const label = valueEl.closest('.cat-row')?.querySelector('.cat-label');
+    if (!label) return;
+    label.querySelectorAll('.delta-pill').forEach((n) => n.remove());
+    const pill = document.createElement('span');
+    pill.className = 'delta-pill';
+    pill.textContent = '+' + (isCount ? String(Math.round(delta)) : formatCompactNum(Math.round(delta)));
+    pill.title = 'Increase since the last update';
+    label.appendChild(pill);
+    clearTimeout(pill._t);
+    pill._t = setTimeout(() => {
+      pill.classList.add('leaving');
+      setTimeout(() => pill.remove(), 400);
+    }, DELTA_SHOW_MS);
+  }
+
+  DELTA_TARGET_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let last = parseDisplayNumber(el.textContent);
+    const isCount = id === 'toolCallsTotalVal';
+    new MutationObserver(() => {
+      const cur = parseDisplayNumber(el.textContent);
+      if (cur == null) return;
+      const prev = last;
+      last = cur;
+      if (prev == null || cur <= prev) return; // drops / resets only update the baseline
+      const delta = cur - prev;
+      const minAbs = isCount ? 1 : DELTA_MIN_ABS;
+      if (delta < minAbs || (!isCount && prev > 0 && delta / prev < DELTA_MIN_REL)) return;
+      showDeltaPill(el, delta, isCount);
+    }).observe(el, { childList: true, characterData: true, subtree: true });
+  });
+
   // ---------- Tab Switching ----------
   function switchTab(tab) {
     activeTab = tab;

@@ -1356,3 +1356,23 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @media (max-width: 380px) {
   .live-status #statusText { display: none; }
 }
+
+/* Cache status chips: cold / warm hit / switch / gap */
+.cache-chips { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.cache-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 0 6px; border-radius: 999px;
+  font-size: 10px; font-weight: 500; line-height: 16px;
+  background: var(--cx-fill); color: var(--cx-fg-muted);
+}
+.cache-chip-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.cache-chip.warm { color: var(--tm-ok); background: color-mix(in srgb, var(--tm-ok) 12%, transparent); }
+.cache-chip.cold { color: var(--tm-crit); background: color-mix(in srgb, var(--tm-crit) 12%, transparent); }
+.cache-chip.switch { color: var(--tm-warn); background: color-mix(in srgb, var(--tm-warn) 12%, transparent); }
+.cache-chip.initial { color: var(--cx-primary); background: color-mix(in srgb, var(--cx-primary) 12%, transparent); }
+.cache-chip.gap {
+  background: transparent; color: var(--cx-fg-muted);
+  border: 1px dashed color-mix(in srgb, var(--cx-fg-muted) 45%, transparent);
+  font-family: var(--cx-mono); line-height: 14px;
+}
+.cache-chip-sub { font-size: 10px; color: var(--cx-fg-muted); opacity: 0.8; }

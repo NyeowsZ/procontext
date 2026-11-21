@@ -1451,3 +1451,21 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .quota-pool-sub span:last-child { font-variant-numeric: tabular-nums; }
 /* Telemetry quota cost rows */
 .item-ledger-val.val-quota { color: var(--tm-warn); font-variant-numeric: tabular-nums; }
+
+/* Active turn cache meta: same row design as the token rows, subtly highlighted */
+.cache-lifespan-strip.cat-list {
+  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
+  gap: 0; margin-top: 6px; padding: 4px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cx-primary) 5%, var(--cx-fill));
+  border: 1px solid color-mix(in srgb, var(--cx-primary) 12%, transparent);
+  font-size: 13px;
+}
+.cache-lifespan-strip .cat-row.cache-meta-row { display: grid; justify-content: normal; padding: 4px 0; margin: 0; }
+.cache-lifespan-strip .cache-meta-val { grid-column: 3 / span 2; justify-self: end; color: var(--cx-fg); }
+.sw-meta-last { background: var(--cx-fg-muted); }
+.sw-meta-model { background: var(--cx-primary); }
+.sw-meta-ttl { background: var(--cx-fg-muted); transition: background-color 140ms var(--ease-out); }
+.cache-meta-row:has(.cache-lifespan-stat.warm) .sw-meta-ttl { background: var(--tm-ok); }
+.cache-meta-row:has(.cache-lifespan-stat.expiring) .sw-meta-ttl { background: var(--tm-warn); }
+.cache-meta-row:has(.cache-lifespan-stat.cold) .sw-meta-ttl { background: var(--tm-crit); }

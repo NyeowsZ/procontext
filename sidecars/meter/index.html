@@ -101,9 +101,22 @@
             <span id="activeTokensVal" class="sr-only"></span>
 
             <!-- Compaction Alert -->
-            <div class="compaction-alert" id="compactionAlert" style="display: none;">
-              <div class="compaction-title font-mono" id="compactionTitle">Context Compaction Active</div>
-              <div class="compaction-desc" id="compactionDesc">History checkpoints summarized earlier turns.</div>
+            <div class="compaction-alert cat-list font-mono" id="compactionAlert" style="display: none;">
+              <div class="cat-row tool-tree-toggle" id="compactionToggleRow" role="button" tabindex="0" aria-expanded="false" title="Click to inspect compaction checkpoints">
+                <span class="swatch sw-compaction"></span>
+                <span class="cat-label-chev">
+                  <span class="cat-label compaction-title" id="compactionTitle">Context Compacted</span>
+                  <svg class="tree-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+                </span>
+                <span class="cat-tok" id="compactionSavedVal">0</span>
+                <span class="cat-pct" id="compactionCountVal">0%</span>
+              </div>
+              <div class="cat-row cache-meta-row" id="compactionLastRow">
+                <span class="swatch sw-meta-last"></span>
+                <span class="cat-label">Last Checkpoint</span>
+                <span class="cat-tok cache-meta-val" id="compactionDesc">—</span>
+              </div>
+              <div class="tool-tree-list hidden" id="compactionCheckpointsList"></div>
             </div>
           </div>
         </section>

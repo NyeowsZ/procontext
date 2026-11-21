@@ -43,6 +43,7 @@
 
   // Tool Calls 3-level drill-down state
   let toolTreeExpanded = false;
+  let compactionTreeExpanded = false;
   const expandedToolNames = new Set();
   const expandedSnapshotIds = new Set();
   const expandedQuotaPoolIds = new Set();
@@ -138,8 +139,12 @@
   const multiModelBadge = document.getElementById('multiModelBadge');
 
   const compactionAlert = document.getElementById('compactionAlert');
+  const compactionToggleRow = document.getElementById('compactionToggleRow');
   const compactionTitle = document.getElementById('compactionTitle');
+  const compactionSavedVal = document.getElementById('compactionSavedVal');
+  const compactionCountVal = document.getElementById('compactionCountVal');
   const compactionDesc = document.getElementById('compactionDesc');
+  const compactionCheckpointsList = document.getElementById('compactionCheckpointsList');
 
   const cacheHitBadge = document.getElementById('cacheHitBadge');
   const turnPromptTotalVal = document.getElementById('turnPromptTotalVal');
@@ -439,12 +444,45 @@
     remainingTokensVal.textContent = `${formatCompactNum(remTok)} free`;
     remainingTokensVal.title = `${formatNum(remTok)} tokens free`;
 
-    // Compaction Alert
-    if (ctx.compactionCount > 0) {
-      compactionAlert.style.display = 'block';
-      compactionTitle.textContent = `Context Compaction Active (${ctx.compactionCount} Checkpoints)`;
+    // Compaction Alert (same .cat-list / .cat-row design consistency)
+    if (ctx.compactionCount > 0 && Array.isArray(ctx.compactions) && ctx.compactions.length > 0) {
+      compactionAlert.style.display = '';
       const lastC = ctx.compactions[ctx.compactions.length - 1];
-      compactionDesc.textContent = `Compacted at Turn #${lastC.turnIndex}, saving ${formatNum(lastC.tokensSaved)} tokens from earlier history.`;
+      const totalSaved = ctx.compactions.reduce((acc, c) => acc + (c.tokensSaved || 0), 0);
+      const totalBefore = ctx.compactions.reduce((acc, c) => acc + (c.tokensBefore || 0), 0);
+      const savedPct = totalBefore > 0 ? ((totalSaved / totalBefore) * 100).toFixed(1) : '0.0';
+
+      if (compactionTitle) {
+        compactionTitle.textContent = 'Context Compacted';
+      }
+      if (compactionSavedVal) {
+        compactionSavedVal.textContent = `-${formatNum(totalSaved)}`;
+        compactionSavedVal.title = `${formatNum(totalSaved)} total tokens saved across ${ctx.compactionCount} checkpoint${ctx.compactionCount === 1 ? '' : 's'}`;
+      }
+      if (compactionCountVal) {
+        compactionCountVal.textContent = `-${savedPct}%`;
+      }
+      if (compactionDesc) {
+        compactionDesc.innerHTML = `${formatCompactNum(lastC.tokensBefore)} → ${formatCompactNum(lastC.tokensAfter)} <span class="compaction-pill" title="Latest compaction at Turn #${lastC.turnIndex} (${ctx.compactionCount} checkpoint${ctx.compactionCount === 1 ? '' : 's'})">Turn #${lastC.turnIndex} · ${ctx.compactionCount}×</span>`;
+      }
+      if (compactionToggleRow) {
+        compactionToggleRow.classList.toggle('expanded', compactionTreeExpanded);
+        compactionToggleRow.setAttribute('aria-expanded', String(compactionTreeExpanded));
+      }
+      if (compactionCheckpointsList) {
+        compactionCheckpointsList.classList.toggle('hidden', !compactionTreeExpanded);
+        if (compactionTreeExpanded) {
+          compactionCheckpointsList.innerHTML = ctx.compactions.map((c, idx) => {
+            const pct = c.tokensBefore > 0 ? ((c.tokensSaved / c.tokensBefore) * 100).toFixed(1) : '0.0';
+            return `
+              <div class="tool-target-row" title="Checkpoint #${idx + 1} at Turn #${c.turnIndex}: ${formatNum(c.tokensBefore)} → ${formatNum(c.tokensAfter)} tokens (${formatNum(c.tokensSaved)} saved)">
+                <span class="tool-target-label">#${idx + 1} · Turn #${c.turnIndex} (${formatCompactNum(c.tokensBefore)} → ${formatCompactNum(c.tokensAfter)})</span>
+                <span class="tool-target-count">-${formatCompactNum(c.tokensSaved)} (-${pct}%)</span>
+              </div>
+            `;
+          }).join('');
+        }
+      }
     } else {
       compactionAlert.style.display = 'none';
     }
@@ -1582,6 +1620,21 @@
   }
 
   // ---------- Tool Calls 3-Level Interactions ----------
+  if (compactionToggleRow) {
+    compactionToggleRow.addEventListener('click', (e) => {
+      e.stopPropagation();
+      compactionTreeExpanded = !compactionTreeExpanded;
+      if (currentTelemetry) renderDashboard(currentTelemetry);
+    });
+    compactionToggleRow.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      e.stopPropagation();
+      compactionTreeExpanded = !compactionTreeExpanded;
+      if (currentTelemetry) renderDashboard(currentTelemetry);
+    });
+  }
+
   if (toolCallsRootRow) {
     toolCallsRootRow.addEventListener('click', (e) => {
       e.stopPropagation();

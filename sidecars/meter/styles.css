@@ -485,13 +485,49 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 
 /* ---------- Compaction ---------- */
-.compaction-alert {
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--tm-warn) 10%, transparent);
+.compaction-alert.cat-list {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+  margin-top: 2px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tm-warn) 5%, var(--cx-fill));
+  border: 1px solid color-mix(in srgb, var(--tm-warn) 16%, transparent);
+  font-size: 13px;
 }
-.compaction-title { font-size: 12px; font-weight: 500; color: var(--tm-warn); }
-.compaction-desc { font-size: 12px; color: var(--cx-fg-muted); margin-top: 2px; }
+.compaction-alert .cat-row {
+  padding: 4px 0;
+  margin: 0;
+}
+.compaction-alert .cat-row.cache-meta-row {
+  display: grid;
+  justify-content: normal;
+}
+.compaction-alert .cache-meta-val {
+  grid-column: 3 / span 2;
+  justify-self: end;
+  color: var(--cx-fg-2);
+  font-size: 12px;
+}
+.sw-compaction { background: var(--tm-warn); }
+.compaction-title { color: var(--tm-warn); font-weight: 500; }
+#compactionSavedVal { color: var(--tm-warn); font-weight: 600; font-variant-numeric: tabular-nums; }
+#compactionCountVal { color: var(--tm-warn); font-variant-numeric: tabular-nums; }
+.compaction-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--tm-warn);
+  background: color-mix(in srgb, var(--tm-warn) 14%, transparent);
+  margin-left: 4px;
+}
 
 /* ---------- Unified Category Ledger (Active Turn, Gen Output, Session Totals) ---------- */
 .cache-rate { font-size: 12px; font-weight: 500; color: var(--tm-cache); }

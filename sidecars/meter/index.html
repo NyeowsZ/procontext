@@ -18,6 +18,9 @@
         <div class="header-sub font-mono" id="cascadeIdBadge" title="Active conversation ID">...</div>
       </div>
       <div class="header-actions">
+        <button class="pill-btn view-mode-pill font-mono" id="viewModeQuickBtn" title="Cycle View Mode (Full → Simple → Coding HUD)">
+          Full
+        </button>
         <button class="pill-btn" id="copyMarkdownBtn" title="Copy /context prompt summary">
           /context
         </button>
@@ -36,9 +39,17 @@
           </button>
           <div class="popover-menu" id="headerMenu" role="menu" aria-label="Main settings">
             <div class="popover-title">View Mode</div>
-            <label class="popover-item" title="Show only essential metrics and the latest 5 compact telemetry items">
-              <input type="checkbox" id="simpleModeToggle">
-              <span>Simple Mode</span>
+            <label class="popover-item" title="Full telemetry breakdown with all sections and pagination">
+              <input type="radio" name="viewMode" value="full" data-view-mode="full" checked>
+              <span>Full</span>
+            </label>
+            <label class="popover-item" title="Essential metrics and latest 5 compact telemetry items">
+              <input type="radio" name="viewMode" value="simple" data-view-mode="simple">
+              <span>Simple</span>
+            </label>
+            <label class="popover-item" title="Compact 2×2 sparkline KPI cards + 4-cell stat strip for coding">
+              <input type="radio" name="viewMode" value="hud" data-view-mode="hud">
+              <span>Coding HUD</span>
             </label>
             <div class="hairline-divider"></div>
             <div class="popover-title">Sections</div>
@@ -79,6 +90,103 @@
             <span class="agent-banner-label" id="agentInspectLabel">Viewing Subagent</span>
           </div>
           <button type="button" class="pill-btn" id="backToMainBtn">← Main</button>
+        </div>
+
+        <!-- Coding HUD Display Mode (2×2 Primary KPI Sparkline Grid + 4-Cell Secondary Strip) -->
+        <div id="codingHudPane" class="coding-hud-pane hidden">
+          <div class="hud-primary-grid">
+            <!-- 1. Cache TTL Countdown -->
+            <div class="hud-kpi-card" id="hudTtlCard">
+              <div class="hud-kpi-label">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                  <circle cx="8" cy="8.5" r="5.5"/>
+                  <path d="M8 5.5v3l2 1.2M6 1.5h4"/>
+                </svg>
+                <span>Cache TTL</span>
+              </div>
+              <div class="hud-kpi-value font-mono" id="hudTtlValue">—</div>
+              <div class="hud-kpi-sub font-mono">
+                <span class="hud-delta-pill" id="hudTtlBadge">Wait</span>
+                <span class="hud-sub-text" id="hudTtlMeta">No samples yet</span>
+              </div>
+              <div class="hud-spark-wrap" id="hudTtlSpark"></div>
+            </div>
+
+            <!-- 2. Cache Hit Rate -->
+            <div class="hud-kpi-card" id="hudCacheCard">
+              <div class="hud-kpi-label">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                  <path d="M8 2 2.5 5l5.5 3 5.5-3L8 2Z"/>
+                  <path d="M2.5 8 8 11l5.5-3M2.5 11 8 14l5.5-3"/>
+                </svg>
+                <span>Cache hit rate</span>
+              </div>
+              <div class="hud-kpi-value font-mono" id="hudCacheValue">0.0%</div>
+              <div class="hud-kpi-sub font-mono">
+                <span class="hud-delta-pill" id="hudCacheDelta">0%</span>
+                <span class="hud-sub-text" id="hudCacheMeta">min 0% · avg 0%</span>
+              </div>
+              <div class="hud-spark-wrap" id="hudCacheSpark"></div>
+            </div>
+
+            <!-- 3. Context Window -->
+            <div class="hud-kpi-card" id="hudContextCard">
+              <div class="hud-kpi-label">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                  <rect x="2" y="3" width="12" height="10" rx="2"/>
+                  <path d="M5 7h6M5 10h4"/>
+                </svg>
+                <span>Context window</span>
+              </div>
+              <div class="hud-kpi-value font-mono" id="hudContextValue">0.0%</div>
+              <div class="hud-kpi-sub font-mono">
+                <span class="hud-delta-pill" id="hudContextDelta">Optimal</span>
+                <span class="hud-sub-text" id="hudContextMeta">0 free</span>
+              </div>
+              <div class="hud-spark-wrap" id="hudContextSpark"></div>
+            </div>
+
+            <!-- 4. Quota Remaining -->
+            <div class="hud-kpi-card" id="hudQuotaCard">
+              <div class="hud-kpi-label">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                  <path d="M8 2.5a5.5 5.5 0 1 0 5.5 5.5"/>
+                  <path d="M8 5v3l2.5 1.5"/>
+                </svg>
+                <span>Quota left</span>
+              </div>
+              <div class="hud-kpi-value font-mono" id="hudQuotaValue">—</div>
+              <div class="hud-kpi-sub font-mono">
+                <span class="hud-delta-pill" id="hudQuotaWeeklyBadge">Wk —</span>
+                <span class="hud-sub-text" id="hudQuotaMeta">Loading pools…</span>
+              </div>
+              <div class="hud-spark-wrap" id="hudQuotaSpark"></div>
+            </div>
+          </div>
+
+          <!-- Secondary 4-Cell Compact Stat Strip -->
+          <div class="hud-secondary-grid">
+            <div class="hud-stat-cell">
+              <div class="hud-stat-title">Turn duration</div>
+              <div class="hud-stat-val font-mono" id="hudDurValue">—</div>
+              <div class="hud-stat-sub font-mono" id="hudDurSub">avg — · max —</div>
+            </div>
+            <div class="hud-stat-cell">
+              <div class="hud-stat-title">New input / turn</div>
+              <div class="hud-stat-val font-mono" id="hudInValue">0</div>
+              <div class="hud-stat-sub font-mono" id="hudInSub">min 0 · avg 0</div>
+            </div>
+            <div class="hud-stat-cell">
+              <div class="hud-stat-title">Output / turn</div>
+              <div class="hud-stat-val font-mono" id="hudOutValue">0</div>
+              <div class="hud-stat-sub font-mono" id="hudOutSub">think 0 · avg 0</div>
+            </div>
+            <div class="hud-stat-cell">
+              <div class="hud-stat-title">Tool calls</div>
+              <div class="hud-stat-val font-mono" id="hudToolsValue">0</div>
+              <div class="hud-stat-sub font-mono" id="hudToolsSub">0 tools · 0/turn</div>
+            </div>
+          </div>
         </div>
 
         <!-- Window Utilization -->

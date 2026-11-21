@@ -50,7 +50,9 @@
   const expandedQuotaModelNames = new Set();
 
   // Telemetry item compaction: default mode + per-item overrides
-  let simpleMode = localStorage.getItem('token_meter_simple_mode') === 'true';
+  let viewMode = localStorage.getItem('token_meter_view_mode') || (localStorage.getItem('token_meter_simple_mode') === 'true' ? 'simple' : 'full');
+  if (!['full', 'simple', 'hud'].includes(viewMode)) viewMode = 'full';
+  let simpleMode = viewMode === 'simple';
   const SIMPLE_TELEMETRY_LIMIT = 5;
   let defaultItemsCompact = localStorage.getItem('token_meter_items_default_compact') === 'true';
   let itemCompactOverrides = new Set();
@@ -102,7 +104,8 @@
   const cascadeIdBadge = document.getElementById('cascadeIdBadge');
   const headerMenuBtn = document.getElementById('headerMenuBtn');
   const headerMenu = document.getElementById('headerMenu');
-  const simpleModeToggle = document.getElementById('simpleModeToggle');
+  const viewModeQuickBtn = document.getElementById('viewModeQuickBtn');
+  const codingHudPane = document.getElementById('codingHudPane');
 
   const tabSessionBtn = document.getElementById('tabSessionBtn');
   const tabAgentsBtn = document.getElementById('tabAgentsBtn');
@@ -564,9 +567,389 @@
     sessionOutputTotal.textContent = formatNum(sessResp);
     if (sessionOutputPct) sessionOutputPct.textContent = pctStr(sessResp, sessTotal);
 
-    // Telemetry List
+    // Telemetry List & Coding HUD
     updateToggleButtons();
     renderTelemetryList();
+    renderCodingHud();
+  }
+
+  // ---------- Coding HUD Mode (2×2 KPI Sparkline Grid + 4-Cell Stat Strip) ----------
+  function buildAreaSparklineSvg(values, colorVar, uid, minVal = null, maxVal = null) {
+    const W = 180;
+    const H = 38;
+    const topY = 5;
+    const botY = 34;
+    let pts = Array.isArray(values) && values.length > 0 ? values.map(v => Number(v) || 0) : [0, 0];
+    if (pts.length === 1) pts = [pts[0], pts[0]];
+
+    const lo = minVal != null ? minVal : Math.min(...pts);
+    const hi = maxVal != null ? maxVal : Math.max(...pts, lo + 1);
+    const span = Math.max(1e-6, hi - lo);
+
+    const coords = pts.map((v, idx) => {
+      const x = (idx / (pts.length - 1)) * W;
+      const norm = Math.min(1, Math.max(0, (v - lo) / span));
+      const y = botY - norm * (botY - topY);
+      return [Number(x.toFixed(1)), Number(y.toFixed(1))];
+    });
+
+    // Build smooth cubic bezier path
+    let d = `M ${coords[0][0]} ${coords[0][1]}`;
+    for (let i = 0; i < coords.length - 1; i++) {
+      const [x0, y0] = coords[i];
+      const [x1, y1] = coords[i + 1];
+      const cx = Number(((x0 + x1) / 2).toFixed(1));
+      d += ` C ${cx} ${y0}, ${cx} ${y1}, ${x1} ${y1}`;
+    }
+    const areaD = `${d} L ${W} ${H} L 0 ${H} Z`;
+
+    return `
+      <svg class="hud-spark-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="${uid}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${colorVar}" stop-opacity="0.28"/>
+            <stop offset="100%" stop-color="${colorVar}" stop-opacity="0.0"/>
+          </linearGradient>
+        </defs>
+        <path d="${areaD}" fill="url(#${uid})"/>
+        <path d="${d}" fill="none" stroke="${colorVar}" stroke-width="1.75" stroke-linecap="round"/>
+      </svg>
+    `;
+  }
+
+  function buildTtlDecaySvg(ratioRemaining, stateClass) {
+    const W = 180;
+    const H = 38;
+    const r = Math.min(1, Math.max(0, Number(ratioRemaining) || 0));
+    const colorMap = {
+      warm: 'var(--tm-ok)',
+      expiring: 'var(--tm-warn)',
+      cold: 'var(--tm-crit)',
+      learning: 'var(--cx-primary)'
+    };
+    const strokeColor = colorMap[stateClass] || 'var(--tm-ok)';
+
+    // Smooth decay S-curve from (0, 6) down to (180, 34)
+    const steps = 24;
+    const allPts = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps; // 0 -> 1 elapsed
+      const x = Number((t * W).toFixed(1));
+      // Smooth cosine decay curve
+      const rem = 0.5 * (1 + Math.cos(Math.PI * t));
+      const y = Number((34 - rem * 28).toFixed(1));
+      allPts.push([x, y, 1 - t]);
+    }
+
+    const buildPath = (pts) => {
+      if (!pts.length) return '';
+      let p = `M ${pts[0][0]} ${pts[0][1]}`;
+      for (let i = 1; i < pts.length; i++) {
+        p += ` L ${pts[i][0]} ${pts[i][1]}`;
+      }
+      return p;
+    };
+
+    const fullPath = buildPath(allPts);
+    // Active filled portion from current elapsed position (1 - r) to end (1.0)
+    const elapsedFrac = 1 - r;
+    const activeIdx = Math.min(steps, Math.max(0, Math.round(elapsedFrac * steps)));
+    const remPts = allPts.slice(activeIdx);
+    const remPath = buildPath(remPts);
+    const startX = remPts[0]?.[0] ?? W;
+    const startY = remPts[0]?.[1] ?? 34;
+    const remArea = remPts.length > 1 ? `${remPath} L ${W} ${H} L ${startX} ${H} Z` : '';
+
+    return `
+      <svg class="hud-spark-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="hudTtlGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${strokeColor}" stop-opacity="0.28"/>
+            <stop offset="100%" stop-color="${strokeColor}" stop-opacity="0.0"/>
+          </linearGradient>
+        </defs>
+        <path d="${fullPath}" fill="none" stroke="var(--cx-border)" stroke-width="1.25" stroke-dasharray="3 3"/>
+        ${remArea ? `<path d="${remArea}" fill="url(#hudTtlGrad)"/>` : ''}
+        ${remPath ? `<path d="${remPath}" fill="none" stroke="${strokeColor}" stroke-width="1.85" stroke-linecap="round"/>` : ''}
+        <circle cx="${startX}" cy="${startY}" r="2.8" fill="${strokeColor}"/>
+      </svg>
+    `;
+  }
+
+  function formatSecShort(sec) {
+    if (sec == null || !isFinite(sec) || sec < 0) return '—';
+    if (sec < 60) return `${sec.toFixed(1)}s`;
+    const m = Math.floor(sec / 60);
+    const s = Math.round(sec % 60);
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+
+  function renderHudTtlLive() {
+    const hudTtlValue = document.getElementById('hudTtlValue');
+    const hudTtlBadge = document.getElementById('hudTtlBadge');
+    const hudTtlMeta = document.getElementById('hudTtlMeta');
+    const hudTtlSpark = document.getElementById('hudTtlSpark');
+    if (!hudTtlValue || !currentTelemetry) return;
+
+    const cl = currentTelemetry.cacheLifespan || {};
+    const modelKey = selectedModel !== 'all' ? selectedModel : cl.warmModelDisplayName;
+    const modelStat = modelKey ? cl.byModel?.[modelKey] : null;
+    const stat = (modelStat && modelStat.sampleCount > 0) ? modelStat : cl.overall;
+
+    const lastCompletedMs = selectedModel !== 'all'
+      ? (currentTelemetry.modelStats?.[selectedModel]?.latestTurn?.completedAtMs || cl.lastChatCompletedAtMs)
+      : cl.lastChatCompletedAtMs;
+    const elapsedMs = lastCompletedMs ? Math.max(0, Date.now() - lastCompletedMs) : null;
+
+    let valText = '—';
+    let badgeText = 'Idle';
+    let badgeCls = 'neutral';
+    let metaText = 'No TTL samples yet';
+    let ratio = 1;
+    let curveState = 'learning';
+
+    if (!stat || stat.status === 'no_data') {
+      valText = elapsedMs != null ? formatDurationShort(elapsedMs) : '—';
+      const hadCache = Boolean(currentTelemetry.latestTurn?.cacheReadTokens > 0);
+      badgeText = hadCache ? 'Warm' : 'Learning';
+      badgeCls = hadCache ? 'up' : 'neutral';
+      metaText = elapsedMs != null ? 'since last chat' : 'waiting for turns';
+      // Default 5-min reference decay while learning
+      ratio = elapsedMs != null ? Math.max(0.08, 1 - elapsedMs / (5 * 60 * 1000)) : 1;
+      curveState = hadCache ? 'warm' : 'learning';
+    } else {
+      const boundText = stat.status === 'bracketed'
+        ? `TTL ~${formatDurationShort(stat.maxWarmGapMs)}–${formatDurationShort(stat.minColdGapMs)}`
+        : (stat.status === 'lower_bound'
+            ? `TTL ≥ ${formatDurationShort(stat.maxWarmGapMs)}`
+            : `TTL < ${formatDurationShort(stat.minColdGapMs)}`);
+      metaText = boundText;
+
+      const ceilMs = stat.minColdGapMs || (stat.maxWarmGapMs ? stat.maxWarmGapMs * 1.35 : 5 * 60 * 1000);
+      ratio = elapsedMs != null && ceilMs > 0 ? Math.max(0, Math.min(1, 1 - elapsedMs / ceilMs)) : 1;
+
+      if (elapsedMs == null) {
+        valText = boundText.replace(/^TTL\s+/, '');
+        badgeText = 'Ready';
+        badgeCls = 'neutral';
+        curveState = 'warm';
+      } else if (stat.maxWarmGapMs != null && elapsedMs < stat.maxWarmGapMs) {
+        valText = formatDurationShort(stat.maxWarmGapMs - elapsedMs);
+        badgeText = 'Warm';
+        badgeCls = 'up';
+        curveState = 'warm';
+      } else if (stat.minColdGapMs != null && elapsedMs < stat.minColdGapMs) {
+        valText = `≤ ${formatDurationShort(stat.minColdGapMs - elapsedMs)}`;
+        badgeText = 'Expiring';
+        badgeCls = 'warn';
+        curveState = 'expiring';
+      } else if (stat.minColdGapMs != null) {
+        valText = 'Expired';
+        badgeText = 'Cold';
+        badgeCls = 'down';
+        metaText = `${formatDurationShort(elapsedMs)} idle · ${boundText}`;
+        ratio = 0;
+        curveState = 'cold';
+      } else {
+        // lower_bound only and elapsed > maxWarmGapMs
+        valText = `${formatDurationShort(elapsedMs)}`;
+        badgeText = 'Unbounded';
+        badgeCls = 'warn';
+        metaText = `past ${formatDurationShort(stat.maxWarmGapMs)} warm max`;
+        curveState = 'expiring';
+      }
+    }
+
+    hudTtlValue.textContent = valText;
+    if (hudTtlBadge) {
+      hudTtlBadge.textContent = badgeText;
+      hudTtlBadge.className = `hud-delta-pill ${badgeCls}`;
+    }
+    if (hudTtlMeta) hudTtlMeta.textContent = metaText;
+    if (hudTtlSpark) hudTtlSpark.innerHTML = buildTtlDecaySvg(ratio, curveState);
+  }
+
+  function renderCodingHud() {
+    if (!codingHudPane || !currentTelemetry) return;
+    renderHudTtlLive();
+
+    const data = currentTelemetry;
+    const ctx = data.liveContext || {};
+    const allTurns = data.turns || [];
+    const relevantTurns = selectedModel !== 'all'
+      ? allTurns.filter(t => t.modelDisplayName === selectedModel)
+      : allTurns;
+    const filteredModel = selectedModel !== 'all' ? data.modelStats?.[selectedModel] : null;
+    const latest = filteredModel?.latestTurn || data.latestTurn || {};
+    const cum = filteredModel
+      ? {
+          totalTurns: filteredModel.turnsCount,
+          overallCacheSavingsPct: filteredModel.cacheEfficiencyPct
+        }
+      : (data.cumulative || {});
+    const model = filteredModel || data.activeModel || {};
+
+    // 2. Cache Hit Rate Card (latest + min · avg + sparkline)
+    const hudCacheValue = document.getElementById('hudCacheValue');
+    const hudCacheDelta = document.getElementById('hudCacheDelta');
+    const hudCacheMeta = document.getElementById('hudCacheMeta');
+    const hudCacheSpark = document.getElementById('hudCacheSpark');
+
+    const cacheSeries = relevantTurns.map(t => parseFloat(t.cacheEfficiencyPct) || 0);
+    const latestCache = cacheSeries.length ? cacheSeries[cacheSeries.length - 1] : (parseFloat(latest.cacheEfficiencyPct) || 0);
+    const prevCache = cacheSeries.length > 1 ? cacheSeries[cacheSeries.length - 2] : latestCache;
+    const cacheDiff = latestCache - prevCache;
+    const warmSeries = cacheSeries.filter(v => v > 0);
+    const minCache = warmSeries.length ? Math.min(...warmSeries) : (cacheSeries.length ? Math.min(...cacheSeries) : 0);
+    const avgCache = parseFloat(cum.overallCacheSavingsPct) || (cacheSeries.length ? cacheSeries.reduce((a, b) => a + b, 0) / cacheSeries.length : 0);
+
+    if (hudCacheValue) hudCacheValue.textContent = `${latestCache.toFixed(1)}%`;
+    if (hudCacheDelta) {
+      if (cacheSeries.length > 1 && Math.abs(cacheDiff) >= 0.1) {
+        const up = cacheDiff >= 0;
+        hudCacheDelta.textContent = `${up ? '↑' : '↓'} ${Math.abs(cacheDiff).toFixed(1)}%`;
+        hudCacheDelta.className = `hud-delta-pill ${up ? 'up' : 'warn'}`;
+      } else {
+        hudCacheDelta.textContent = latestCache >= 80 ? 'High' : (latestCache >= 50 ? 'Mid' : 'Low');
+        hudCacheDelta.className = `hud-delta-pill ${latestCache >= 80 ? 'up' : (latestCache >= 50 ? 'warn' : 'down')}`;
+      }
+    }
+    if (hudCacheMeta) {
+      hudCacheMeta.textContent = `min ${minCache.toFixed(0)}% · avg ${avgCache.toFixed(1)}%`;
+    }
+    if (hudCacheSpark) {
+      hudCacheSpark.innerHTML = buildAreaSparklineSvg(cacheSeries.slice(-18), 'var(--tm-cache)', 'hudCacheGrad', 0, 100);
+    }
+
+    // 3. Context Window Card (% used + free + sparkline)
+    const hudContextValue = document.getElementById('hudContextValue');
+    const hudContextDelta = document.getElementById('hudContextDelta');
+    const hudContextMeta = document.getElementById('hudContextMeta');
+    const hudContextSpark = document.getElementById('hudContextSpark');
+
+    const activeTok = filteredModel ? (latest.totalTurnTokens || 0) : (ctx.activeTokens || 0);
+    const maxLim = model.maxContextTokens || ctx.maxLimit || 1048576;
+    const ctxPct = Math.min(100, Math.max(0, maxLim > 0 ? (activeTok / maxLim) * 100 : 0));
+    const remTok = Math.max(0, maxLim - activeTok);
+    const ctxSeries = relevantTurns.map(t => maxLim > 0 ? ((t.totalTurnTokens || 0) / maxLim) * 100 : 0);
+    const prevCtxPct = ctxSeries.length > 1 ? ctxSeries[ctxSeries.length - 2] : ctxPct;
+    const ctxDiff = ctxPct - prevCtxPct;
+    const ctxColor = ctxPct >= 80 ? 'var(--tm-crit)' : (ctxPct >= 50 ? 'var(--tm-warn)' : 'var(--cx-primary)');
+
+    if (hudContextValue) hudContextValue.textContent = `${ctxPct.toFixed(1)}%`;
+    if (hudContextDelta) {
+      if (ctxSeries.length > 1 && Math.abs(ctxDiff) >= 0.05) {
+        const up = ctxDiff >= 0;
+        hudContextDelta.textContent = `${up ? '↑' : '↓'} ${Math.abs(ctxDiff).toFixed(1)}%`;
+        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : (ctxPct >= 50 ? 'warn' : 'neutral')}`;
+      } else {
+        hudContextDelta.textContent = ctxPct >= 80 ? 'Critical' : (ctxPct >= 50 ? 'Moderate' : 'Optimal');
+        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : (ctxPct >= 50 ? 'warn' : 'up')}`;
+      }
+    }
+    if (hudContextMeta) {
+      hudContextMeta.textContent = `${formatCompactNum(remTok)} free · ${formatCompactNum(activeTok)}`;
+    }
+    if (hudContextSpark) {
+      const ceil = Math.max(20, ...ctxSeries, ctxPct);
+      hudContextSpark.innerHTML = buildAreaSparklineSvg(ctxSeries.slice(-18), ctxColor, 'hudCtxGrad', 0, ceil);
+    }
+
+    // 4. Quota Remaining Card (active 5h & weekly % left + reset timer)
+    const hudQuotaValue = document.getElementById('hudQuotaValue');
+    const hudQuotaWeeklyBadge = document.getElementById('hudQuotaWeeklyBadge');
+    const hudQuotaMeta = document.getElementById('hudQuotaMeta');
+    const hudQuotaSpark = document.getElementById('hudQuotaSpark');
+
+    const activeModelName = filteredModel?.displayName || latest.modelDisplayName || model.displayName || '';
+    const pools = globalUsageData?.quotaPools || [];
+    const lowerMod = activeModelName.toLowerCase();
+    const matchPool = (winType) => pools.find(p =>
+      (p.windowType === 'weekly' ? 'weekly' : '5h') === winType &&
+      ((p.models || []).some(m => m.toLowerCase().includes(lowerMod)) ||
+       (p.correlation?.byModel || []).some(m => m.model.toLowerCase().includes(lowerMod)))
+    ) || pools.find(p => (p.windowType === 'weekly' ? 'weekly' : '5h') === winType) || null;
+
+    const pool5h = matchPool('5h');
+    const poolWk = matchPool('weekly');
+    const primaryPool = pool5h || poolWk;
+
+    if (primaryPool) {
+      const remPct = Math.max(0, Math.min(100, primaryPool.remainingPct ?? (100 - (primaryPool.usedPct || 0))));
+      if (hudQuotaValue) hudQuotaValue.textContent = `${remPct.toFixed(1)}%`;
+      if (hudQuotaWeeklyBadge) {
+        if (poolWk) {
+          const wkRem = Math.max(0, Math.min(100, poolWk.remainingPct ?? (100 - (poolWk.usedPct || 0))));
+          hudQuotaWeeklyBadge.textContent = `Wk ${wkRem.toFixed(0)}%`;
+          hudQuotaWeeklyBadge.className = `hud-delta-pill ${wkRem <= 20 ? 'down' : (wkRem <= 50 ? 'warn' : 'up')}`;
+        } else {
+          hudQuotaWeeklyBadge.textContent = '5h left';
+          hudQuotaWeeklyBadge.className = `hud-delta-pill ${remPct <= 20 ? 'down' : (remPct <= 50 ? 'warn' : 'up')}`;
+        }
+      }
+      if (hudQuotaMeta) {
+        const resetTxt = primaryPool.resetTime ? `Resets ${formatCountdown(primaryPool.msUntilReset)}` : primaryPool.label;
+        hudQuotaMeta.textContent = resetTxt;
+      }
+      if (hudQuotaSpark) {
+        const qState = remPct <= 20 ? 'cold' : (remPct <= 50 ? 'expiring' : 'warm');
+        hudQuotaSpark.innerHTML = buildTtlDecaySvg(remPct / 100, qState);
+      }
+    } else {
+      if (hudQuotaValue) hudQuotaValue.textContent = '—';
+      if (hudQuotaWeeklyBadge) {
+        hudQuotaWeeklyBadge.textContent = 'Wk —';
+        hudQuotaWeeklyBadge.className = 'hud-delta-pill neutral';
+      }
+      if (hudQuotaMeta) hudQuotaMeta.textContent = 'No pool data';
+      if (hudQuotaSpark) hudQuotaSpark.innerHTML = buildTtlDecaySvg(1, 'learning');
+    }
+
+    // Secondary 4-Cell Compact Stat Strip
+    // Cell 1: Turn duration (latest + avg · max)
+    const hudDurValue = document.getElementById('hudDurValue');
+    const hudDurSub = document.getElementById('hudDurSub');
+    const durs = relevantTurns
+      .map(t => (t.completedAtMs && t.createdAtMs && t.completedAtMs >= t.createdAtMs) ? (t.completedAtMs - t.createdAtMs) / 1000 : null)
+      .filter(v => v != null && v >= 0 && v < 3600);
+    const latestDur = durs.length ? durs[durs.length - 1] : null;
+    const avgDur = durs.length ? durs.reduce((a, b) => a + b, 0) / durs.length : null;
+    const maxDur = durs.length ? Math.max(...durs) : null;
+    if (hudDurValue) hudDurValue.textContent = formatSecShort(latestDur);
+    if (hudDurSub) hudDurSub.textContent = `avg ${formatSecShort(avgDur)} · max ${formatSecShort(maxDur)}`;
+
+    // Cell 2: New input / turn (latest + min · avg)
+    const hudInValue = document.getElementById('hudInValue');
+    const hudInSub = document.getElementById('hudInSub');
+    const inSeries = relevantTurns.map(t => t.inputTokens || 0);
+    const latestIn = latest.inputTokens || (inSeries.length ? inSeries[inSeries.length - 1] : 0);
+    const minIn = inSeries.length ? Math.min(...inSeries) : 0;
+    const avgIn = inSeries.length ? Math.round(inSeries.reduce((a, b) => a + b, 0) / inSeries.length) : 0;
+    if (hudInValue) hudInValue.textContent = formatCompactNum(latestIn);
+    if (hudInSub) hudInSub.textContent = `min ${formatCompactNum(minIn)} · avg ${formatCompactNum(avgIn)}`;
+
+    // Cell 3: Output / turn (latest + think · avg)
+    const hudOutValue = document.getElementById('hudOutValue');
+    const hudOutSub = document.getElementById('hudOutSub');
+    const outSeries = relevantTurns.map(t => t.outputTokens || 0);
+    const latestOut = latest.outputTokens || (outSeries.length ? outSeries[outSeries.length - 1] : 0);
+    const latestThink = latest.thinkingTokens || 0;
+    const avgOut = outSeries.length ? Math.round(outSeries.reduce((a, b) => a + b, 0) / outSeries.length) : 0;
+    if (hudOutValue) hudOutValue.textContent = formatCompactNum(latestOut);
+    if (hudOutSub) hudOutSub.textContent = `think ${formatCompactNum(latestThink)} · avg ${formatCompactNum(avgOut)}`;
+
+    // Cell 4: Tool calls (total + unique tools · per-turn avg)
+    const hudToolsValue = document.getElementById('hudToolsValue');
+    const hudToolsSub = document.getElementById('hudToolsSub');
+    const tcSummary = filteredModel
+      ? (data.toolCalls?.byModel?.[filteredModel.displayName] || { totalCalls: 0, tools: [] })
+      : (data.toolCalls || { totalCalls: 0, tools: [] });
+    const totalCalls = tcSummary.totalCalls || 0;
+    const uniqueTools = (tcSummary.tools || []).length;
+    const turnsCount = relevantTurns.length || cum.totalTurns || 1;
+    const callsPerTurn = (totalCalls / turnsCount).toFixed(1);
+    if (hudToolsValue) hudToolsValue.textContent = formatNum(totalCalls);
+    if (hudToolsSub) hudToolsSub.textContent = `${uniqueTools} tool${uniqueTools === 1 ? '' : 's'} · ${callsPerTurn}/turn`;
   }
 
   // ---------- 3-Level Tool Calls Drill-Down ----------
@@ -727,6 +1110,7 @@
     if (!stat || stat.status === 'no_data') {
       cacheLifespanStat.textContent = '—';
       cacheLifespanStat.title = 'No lifespan data yet. Waiting for same-model chat-to-chat gaps of 30s or more (ignores short bursts and tool loops).';
+      renderHudTtlLive();
       return;
     }
 
@@ -768,6 +1152,7 @@
         cacheLifespanStat.classList.add('cold');
       }
     }
+    renderHudTtlLive();
   }
 
   function formatCountdown(ms) {
@@ -1019,6 +1404,7 @@
     // 5-Hour & Weekly Quota Pools (rendered in both Session & Global tabs)
     renderQuotaPoolsInto(sessionQuotaPoolsList, data.quotaPools || [], selectedModel);
     renderQuotaPoolsInto(quotaPoolsList, data.quotaPools || [], selectedModel);
+    if (currentTelemetry) renderCodingHud();
 
     const filtered = selectedModel !== 'all' ? (data.byModel?.[selectedModel] || null) : null;
     const tot = filtered || data.current || {};
@@ -1839,12 +2225,45 @@
   }
 
   // ---------- Section Visibility, Compact & Popovers ----------
+  const VIEW_MODE_LABELS = { full: 'Full', simple: 'Simple', hud: 'HUD' };
+  const VIEW_MODE_ORDER = ['full', 'simple', 'hud'];
+
+  function setViewMode(nextMode) {
+    if (!['full', 'simple', 'hud'].includes(nextMode)) nextMode = 'full';
+    viewMode = nextMode;
+    simpleMode = viewMode === 'simple';
+    try {
+      localStorage.setItem('token_meter_view_mode', viewMode);
+      localStorage.setItem('token_meter_simple_mode', String(simpleMode));
+    } catch {}
+    itemCompactOverrides.clear();
+    if (simpleMode) {
+      sectionCompact.genOutput = true;
+      sectionCompact.sessionTotals = true;
+    } else if (viewMode === 'full') {
+      sectionCompact.genOutput = false;
+      sectionCompact.sessionTotals = false;
+    }
+    saveJsonPref('token_meter_section_compact', sectionCompact);
+    applySectionStates();
+    renderTelemetryList();
+    renderCodingHud();
+  }
+
   function applySectionStates() {
-    document.body.classList.toggle('simple-mode', simpleMode);
-    if (simpleModeToggle) simpleModeToggle.checked = simpleMode;
+    document.body.classList.toggle('simple-mode', viewMode === 'simple');
+    document.body.classList.toggle('hud-mode', viewMode === 'hud');
+    if (codingHudPane) codingHudPane.classList.toggle('hidden', viewMode !== 'hud');
+    if (viewModeQuickBtn) {
+      viewModeQuickBtn.textContent = VIEW_MODE_LABELS[viewMode] || 'Full';
+      viewModeQuickBtn.classList.toggle('active-mode', viewMode !== 'full');
+    }
+    document.querySelectorAll('[data-view-mode]').forEach((rb) => {
+      rb.checked = rb.dataset.viewMode === viewMode;
+    });
     document.querySelectorAll('[data-section]').forEach((sec) => {
       const key = sec.dataset.section;
-      const visible = sectionVisibility[key] !== false;
+      const visible = viewMode !== 'hud' && sectionVisibility[key] !== false;
       const compact = Boolean(sectionCompact[key]);
       sec.classList.toggle('hidden', !visible);
       sec.classList.toggle('compact', compact);
@@ -1982,23 +2401,17 @@
     if (e.key === 'Escape') closeAllMenus();
   });
 
-  if (simpleModeToggle) {
-    simpleModeToggle.addEventListener('change', () => {
-      simpleMode = simpleModeToggle.checked;
-      try {
-        localStorage.setItem('token_meter_simple_mode', String(simpleMode));
-      } catch {}
-      itemCompactOverrides.clear();
-      if (simpleMode) {
-        sectionCompact.genOutput = true;
-        sectionCompact.sessionTotals = true;
-      } else {
-        sectionCompact.genOutput = false;
-        sectionCompact.sessionTotals = false;
-      }
-      saveJsonPref('token_meter_section_compact', sectionCompact);
-      applySectionStates();
-      renderTelemetryList();
+  document.querySelectorAll('[data-view-mode]').forEach((rb) => {
+    rb.addEventListener('change', () => {
+      if (rb.checked) setViewMode(rb.dataset.viewMode);
+    });
+  });
+
+  if (viewModeQuickBtn) {
+    viewModeQuickBtn.addEventListener('click', () => {
+      const idx = VIEW_MODE_ORDER.indexOf(viewMode);
+      const next = VIEW_MODE_ORDER[(idx + 1) % VIEW_MODE_ORDER.length];
+      setViewMode(next);
     });
   }
 

@@ -1599,3 +1599,181 @@ body.simple-mode #compactAllBtn,
 body.simple-mode #telemetryMenuBtn {
   display: none;
 }
+
+/* View Mode quick pill & radio items */
+.popover-item input[type="radio"] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--cx-primary);
+  cursor: pointer;
+}
+.view-mode-pill.active-mode {
+  color: var(--cx-primary);
+  background: color-mix(in srgb, var(--cx-primary) 14%, transparent);
+}
+
+/* Coding HUD Display Mode (2×2 KPI Sparkline Grid + 4-Cell Secondary Strip) */
+.coding-hud-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.coding-hud-pane.hidden {
+  display: none;
+}
+
+.hud-primary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--cx-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cx-surface) 60%, transparent);
+  overflow: hidden;
+}
+.hud-kpi-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 12px 12px 10px;
+  min-width: 0;
+  border-right: 1px solid var(--cx-border);
+  border-bottom: 1px solid var(--cx-border);
+}
+.hud-kpi-card:nth-child(2n) {
+  border-right: none;
+}
+.hud-kpi-card:nth-last-child(-n+2) {
+  border-bottom: none;
+}
+
+.hud-kpi-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cx-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud-kpi-label svg {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.hud-kpi-value {
+  margin-top: 4px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: var(--cx-fg);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud-kpi-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+  font-size: 10.5px;
+}
+.hud-delta-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  background: var(--cx-fill);
+  color: var(--cx-fg-2);
+}
+.hud-delta-pill.up {
+  color: var(--tm-ok);
+  background: color-mix(in srgb, var(--tm-ok) 14%, transparent);
+}
+.hud-delta-pill.warn {
+  color: var(--tm-warn);
+  background: color-mix(in srgb, var(--tm-warn) 14%, transparent);
+}
+.hud-delta-pill.down {
+  color: var(--tm-crit);
+  background: color-mix(in srgb, var(--tm-crit) 14%, transparent);
+}
+.hud-sub-text {
+  color: var(--cx-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-spark-wrap {
+  margin-top: 10px;
+  height: 36px;
+  width: 100%;
+}
+.hud-spark-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Secondary 4-Cell Compact Stat Strip */
+.hud-secondary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--cx-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cx-surface) 45%, transparent);
+  overflow: hidden;
+}
+.hud-stat-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  min-width: 0;
+  border-right: 1px solid var(--cx-border);
+  border-bottom: 1px solid var(--cx-border);
+}
+.hud-stat-cell:nth-child(2n) {
+  border-right: none;
+}
+.hud-stat-cell:nth-last-child(-n+2) {
+  border-bottom: none;
+}
+.hud-stat-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cx-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud-stat-val {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--cx-fg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+.hud-stat-sub {
+  font-size: 10.5px;
+  color: var(--cx-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

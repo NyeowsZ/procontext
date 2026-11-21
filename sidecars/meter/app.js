@@ -1213,6 +1213,13 @@
       const hasPrevSame = curPrompt != null && prevInList && prevInList.promptNumber === curPrompt;
       const hasNextSame = curPrompt != null && nextInList && nextInList.promptNumber === curPrompt;
 
+      const promptPreview = t.userPromptPreview ||
+        (currentTelemetry?.prompts?.find(p => p.promptNumber === curPrompt)?.userPromptPreview) || '';
+      const promptTitle = curPrompt != null
+        ? `Prompt #${curPrompt}${promptPreview ? `: "${promptPreview}"` : ''}`
+        : '';
+      const promptDataAttr = curPrompt != null ? ` data-prompt="${curPrompt}"` : '';
+
       let groupClass = '';
       let bracketHtml = '';
       if (hasPrevSame || hasNextSame) {
@@ -1224,7 +1231,7 @@
           posClass = 'group-pos-first'; // bottom turn in prompt group
         }
         groupClass += ` ${posClass}`;
-        bracketHtml = `<span class="step-group-bracket" aria-hidden="true" title="Part of prompt ${curPrompt}"></span>`;
+        bracketHtml = `<span class="step-group-bracket" title="${escapeHtml(promptTitle)}" aria-label="${escapeHtml(promptTitle)}"></span>`;
       }
 
       const stepCacheLine = formatCacheStatusLine(t.gapSincePrevTurnMs, t.cacheStatus, modelLabel, t.prevModelShortName);
@@ -1239,7 +1246,7 @@
       ]);
 
       return `
-        <div class="telemetry-item step-item${groupClass}${isCompact ? ' compact' : ''}" data-key="${escapeHtml(key)}" role="button" tabindex="0" aria-expanded="${!isCompact}" title="Click to ${isCompact ? 'expand' : 'compact'}">
+        <div class="telemetry-item step-item${groupClass}${isCompact ? ' compact' : ''}" data-key="${escapeHtml(key)}"${promptDataAttr} role="button" tabindex="0" aria-expanded="${!isCompact}" title="Click to ${isCompact ? 'expand' : 'compact'}">
           ${bracketHtml}
           <div class="item-top-row">
             <div class="item-title">
@@ -1670,6 +1677,26 @@
   }
 
   if (telemetryList) {
+    let currentHoveredPrompt = null;
+    telemetryList.addEventListener('pointerover', (e) => {
+      const item = e.target.closest('.step-item[data-prompt]');
+      const pNum = item?.dataset?.prompt || null;
+      if (pNum === currentHoveredPrompt) return;
+      if (currentHoveredPrompt) {
+        telemetryList.querySelectorAll(`.step-item[data-prompt="${currentHoveredPrompt}"]`).forEach(el => el.classList.remove('group-hovered'));
+      }
+      currentHoveredPrompt = pNum;
+      if (pNum) {
+        telemetryList.querySelectorAll(`.step-item[data-prompt="${pNum}"]`).forEach(el => el.classList.add('group-hovered'));
+      }
+    });
+    telemetryList.addEventListener('pointerleave', () => {
+      if (currentHoveredPrompt) {
+        telemetryList.querySelectorAll(`.step-item[data-prompt="${currentHoveredPrompt}"]`).forEach(el => el.classList.remove('group-hovered'));
+        currentHoveredPrompt = null;
+      }
+    });
+
     telemetryList.addEventListener('click', (e) => {
       if (window.getSelection && String(window.getSelection()).length) return;
       toggleItem(e.target.closest('.telemetry-item'));

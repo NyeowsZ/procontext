@@ -646,9 +646,10 @@ export async function getConversationTokenTelemetry(requestedCascadeId = null) {
         break;
       }
     }
-    const assignedPromptNumber = promptGroups[targetPromptIdx].promptNumber;
-    turnItem.promptNumber = assignedPromptNumber;
-    promptGroups[targetPromptIdx].turns.push(turnItem);
+    const assignedGroup = promptGroups[targetPromptIdx];
+    turnItem.promptNumber = assignedGroup.promptNumber;
+    turnItem.userPromptPreview = assignedGroup.userPromptPreview || '';
+    assignedGroup.turns.push(turnItem);
   });
 
   const latestTurn = turns.length > 0 ? turns[turns.length - 1] : null;

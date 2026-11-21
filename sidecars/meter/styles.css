@@ -1244,7 +1244,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
   left: 7px;
   width: 8px;
   box-sizing: border-box;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: help;
+  transition: border-color 140ms var(--ease-out);
+}
+
+/* Hover highlight on prompt group */
+.telemetry-item.step-item.group-hovered {
+  background-color: color-mix(in srgb, var(--cx-primary) 6%, transparent);
+}
+.telemetry-item.step-item.group-hovered .step-group-bracket {
+  --bracket-color: var(--cx-primary);
 }
 
 /* Top turn of prompt group in reverse-chronological list: elbow at capsule anchor, line runs down */

@@ -2,19 +2,19 @@
   "command": "node",
   "args": ["main.mjs"],
   "restart_policy": "always",
-  "display_name": "Token & Context Meter",
+  "display_name": "Procontext",
   "description": "Live context window consumption and exact server-side token telemetry for the active conversation.",
   "has_web_ui": true,
   "agent_permissions": {
     "allows_user_interactions": false
   },
   "ui_config": {
-    "display_name": "Context Meter",
+    "display_name": "Procontext",
     "views": [
       {
         "path": "/",
         "entrypoint": "SIDECAR_UI_ENTRYPOINT_AUX_PANE",
-        "title": "Context Meter"
+        "title": "Procontext"
       }
     ]
   }

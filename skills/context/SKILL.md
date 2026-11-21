@@ -3,7 +3,7 @@ name: context
 description: Tracks exact server-side token usage per AI turn and live context window consumption for the active chat, matching the accuracy of Antigravity CLI's /context command. Use when the user asks about context usage, token count, context window limits, prompt caching, or triggers /context.
 ---
 
-# /context: Token & Context Window Meter
+# /context: Procontext — Token & Context Window Meter
 
 This skill inspects exact, server-side telemetry from the active conversation without client-side approximation or token estimation. It matches the accuracy of the Antigravity CLI `/context` command and adds live 5-hour & Weekly quota tracking with model separation and cross-chat cache lifespan bounds.
 

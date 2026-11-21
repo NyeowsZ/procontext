@@ -147,10 +147,22 @@
               </div>
             </div>
             <!-- Live Cache Lifespan Strip -->
-            <div class="cache-lifespan-strip font-mono" id="cacheLifespanStrip">
-              <div class="cache-meta-row"><span class="cache-meta-label">Last Chat</span><span class="cache-meta-val" id="lastChatAgoVal">—</span></div>
-              <div class="cache-meta-row"><span class="cache-meta-label">Cache Model</span><span class="routing-pill" id="warmModelPill">—</span></div>
-              <div class="cache-meta-row"><span class="cache-meta-label">Cache TTL</span><span class="cache-lifespan-stat" id="cacheLifespanStat">No lifespan data yet</span></div>
+            <div class="cache-lifespan-strip cat-list font-mono" id="cacheLifespanStrip">
+              <div class="cat-row cache-meta-row">
+                <span class="swatch sw-meta-last"></span>
+                <span class="cat-label">Last Chat</span>
+                <span class="cat-tok cache-meta-val" id="lastChatAgoVal">—</span>
+              </div>
+              <div class="cat-row cache-meta-row">
+                <span class="swatch sw-meta-model"></span>
+                <span class="cat-label">Cache Model</span>
+                <span class="cat-tok cache-meta-val"><span class="routing-pill" id="warmModelPill">—</span></span>
+              </div>
+              <div class="cat-row cache-meta-row">
+                <span class="swatch sw-meta-ttl"></span>
+                <span class="cat-label">Cache TTL</span>
+                <span class="cat-tok cache-meta-val"><span class="cache-lifespan-stat" id="cacheLifespanStat">No lifespan data yet</span></span>
+              </div>
             </div>
           </div>
         </section>

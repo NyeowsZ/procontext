@@ -868,7 +868,7 @@
                   <div class="quota-model-row" data-quota-action="toggle-model" data-model-key="${escapeHtml(mKey)}">
                     <span class="quota-model-left">
                       <svg class="tree-chev" width="10" height="10" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
-                      <span class="routing-pill brand-${brandOf(m.model)}">${escapeHtml(m.model)}</span>
+                      <span class="quota-model-name brand-${brandOf(m.model)}">${escapeHtml(m.model)}</span>
                     </span>
                     <span class="quota-model-right">
                       <span class="quota-model-share">${formatCompactNum(m.totalProcessedTokens)} · ${m.sharePct}%</span>

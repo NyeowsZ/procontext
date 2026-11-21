@@ -1546,3 +1546,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .ttl-countdown.warm { color: var(--tm-ok); background: color-mix(in srgb, var(--tm-ok) 14%, transparent); }
 .ttl-countdown.expiring { color: var(--tm-warn); background: color-mix(in srgb, var(--tm-warn) 14%, transparent); }
 .ttl-countdown.cold { color: var(--tm-crit); background: color-mix(in srgb, var(--tm-crit) 14%, transparent); }
+
+/* Model Separation rows: plain brand-colored name, no pill */
+.quota-model-name { font-size: 11px; font-weight: 500; color: var(--brand); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -1239,7 +1239,7 @@
       ]);
 
       return `
-        <div class="telemetry-item${groupClass}${isCompact ? ' compact' : ''}" data-key="${escapeHtml(key)}" role="button" tabindex="0" aria-expanded="${!isCompact}" title="Click to ${isCompact ? 'expand' : 'compact'}">
+        <div class="telemetry-item step-item${groupClass}${isCompact ? ' compact' : ''}" data-key="${escapeHtml(key)}" role="button" tabindex="0" aria-expanded="${!isCompact}" title="Click to ${isCompact ? 'expand' : 'compact'}">
           ${bracketHtml}
           <div class="item-top-row">
             <div class="item-title">

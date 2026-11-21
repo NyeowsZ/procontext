@@ -1229,62 +1229,47 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 
 /* Subtle prompt grouping tree bracket in By Step view */
-.telemetry-item.grouped-step {
+.telemetry-item.step-item {
   position: relative;
-  padding-left: 20px;
+  padding-left: 22px;
+  --bracket-anchor-y: 16px;
+  --bracket-color: var(--cx-border-strong, rgba(255, 255, 255, 0.18));
 }
+.telemetry-item.step-item.compact {
+  --bracket-anchor-y: 14px;
+}
+
 .step-group-bracket {
   position: absolute;
-  left: 6px;
-  top: 0;
-  bottom: 0;
-  width: 10px;
+  left: 7px;
+  width: 8px;
+  box-sizing: border-box;
   pointer-events: none;
 }
-.step-group-bracket::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  width: 1px;
-  background-color: var(--cx-border-strong, rgba(255, 255, 255, 0.16));
-}
-.step-group-bracket::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  width: 6px;
-  height: 1px;
-  background-color: var(--cx-border-strong, rgba(255, 255, 255, 0.16));
-}
 
-/* Bracket segment variations based on position inside prompt */
-/* First step in multi-step prompt (bottom of bracket in reverse-chronological list) */
-.telemetry-item.group-pos-first .step-group-bracket::before {
-  top: 0;
-  bottom: 50%;
-}
-.telemetry-item.group-pos-first .step-group-bracket::after {
-  bottom: 50%;
-  border-bottom-left-radius: 2px;
-}
-
-/* Last step in multi-step prompt (top of bracket in reverse-chronological list) */
-.telemetry-item.group-pos-last .step-group-bracket::before {
-  top: 50%;
+/* Top turn of prompt group in reverse-chronological list: elbow at capsule anchor, line runs down */
+.telemetry-item.group-pos-last .step-group-bracket {
+  top: var(--bracket-anchor-y);
   bottom: 0;
-}
-.telemetry-item.group-pos-last .step-group-bracket::after {
-  top: 50%;
-  border-top-left-radius: 2px;
+  border-left: 1px solid var(--bracket-color);
+  border-top: 1px solid var(--bracket-color);
+  border-top-left-radius: 4px;
 }
 
-/* Middle steps */
-.telemetry-item.group-pos-middle .step-group-bracket::before {
+/* Middle turns of prompt group: continuous line running top to bottom */
+.telemetry-item.group-pos-middle .step-group-bracket {
   top: 0;
   bottom: 0;
+  border-left: 1px solid var(--bracket-color);
 }
-.telemetry-item.group-pos-middle .step-group-bracket::after {
-  display: none;
+
+/* Bottom turn of prompt group in reverse-chronological list: line enters from top, curves to capsule anchor */
+.telemetry-item.group-pos-first .step-group-bracket {
+  top: 0;
+  height: var(--bracket-anchor-y);
+  border-left: 1px solid var(--bracket-color);
+  border-bottom: 1px solid var(--bracket-color);
+  border-bottom-left-radius: 4px;
 }
 
 .item-cache-badge {

@@ -755,7 +755,7 @@
       groups.get(b).push(m);
     }
     return [...groups.entries()].map(([b, ms]) =>
-      `<span class="brand-chip brand-${b}" title="${escapeHtml(ms.join('\n'))}"><i></i>${BRAND_NAMES[b]}${ms.length > 1 ? ` <b>${ms.length}</b>` : ''}</span>`
+      `<span class="brand-chip brand-${b}" title="${escapeHtml(ms.join('\n'))}"><i></i>${BRAND_NAMES[b]}</span>`
     ).join('');
   }
 

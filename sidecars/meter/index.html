@@ -34,7 +34,13 @@
               <circle cx="8" cy="13" r="1.3"/>
             </svg>
           </button>
-          <div class="popover-menu" id="headerMenu" role="menu" aria-label="Visible sections">
+          <div class="popover-menu" id="headerMenu" role="menu" aria-label="Main settings">
+            <div class="popover-title">View Mode</div>
+            <label class="popover-item" title="Show only essential metrics and the latest 5 compact telemetry items">
+              <input type="checkbox" id="simpleModeToggle">
+              <span>Simple Mode</span>
+            </label>
+            <div class="hairline-divider"></div>
             <div class="popover-title">Sections</div>
             <label class="popover-item"><input type="checkbox" data-section-toggle="windowUtil" checked><span>Window Util</span></label>
             <label class="popover-item"><input type="checkbox" data-section-toggle="quotas" checked><span>Quotas</span></label>

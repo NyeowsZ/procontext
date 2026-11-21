@@ -50,6 +50,8 @@
   const expandedQuotaModelNames = new Set();
 
   // Telemetry item compaction: default mode + per-item overrides
+  let simpleMode = localStorage.getItem('token_meter_simple_mode') === 'true';
+  const SIMPLE_TELEMETRY_LIMIT = 5;
   let defaultItemsCompact = localStorage.getItem('token_meter_items_default_compact') === 'true';
   let itemCompactOverrides = new Set();
   try {
@@ -65,7 +67,8 @@
     return `${currentTelemetry?.cascadeId || 'active'}:${kind}:${num}`;
   }
   function isItemCompact(key) {
-    return defaultItemsCompact ? !itemCompactOverrides.has(key) : itemCompactOverrides.has(key);
+    const baseCompact = simpleMode || defaultItemsCompact;
+    return baseCompact ? !itemCompactOverrides.has(key) : itemCompactOverrides.has(key);
   }
 
   // Persisted UI preferences: visible sections, compacted sections, telemetry fields
@@ -99,6 +102,7 @@
   const cascadeIdBadge = document.getElementById('cascadeIdBadge');
   const headerMenuBtn = document.getElementById('headerMenuBtn');
   const headerMenu = document.getElementById('headerMenu');
+  const simpleModeToggle = document.getElementById('simpleModeToggle');
 
   const tabSessionBtn = document.getElementById('tabSessionBtn');
   const tabAgentsBtn = document.getElementById('tabAgentsBtn');
@@ -1193,6 +1197,19 @@
       if (selectedModel !== 'all') {
         filtered = fullList.filter(p => (p.modelsUsed || []).includes(selectedModel));
       }
+
+      if (simpleMode) {
+        const latestItems = filtered.slice(0, SIMPLE_TELEMETRY_LIMIT);
+        if (telemetryCompactVal) {
+          telemetryCompactVal.textContent = filtered.length > SIMPLE_TELEMETRY_LIMIT
+            ? `· latest ${latestItems.length} of ${filtered.length}`
+            : `· ${filtered.length} prompt${filtered.length === 1 ? '' : 's'}`;
+        }
+        renderPromptList(latestItems, fullList[0]?.promptNumber);
+        if (telemetryPagination) telemetryPagination.classList.add('hidden');
+        return;
+      }
+
       if (telemetryCompactVal) telemetryCompactVal.textContent = `· ${filtered.length} prompt${filtered.length === 1 ? '' : 's'}`;
 
       const totalPages = Math.ceil(filtered.length / TELEMETRY_PAGE_SIZE) || 1;
@@ -1213,6 +1230,19 @@
       if (selectedModel !== 'all') {
         filtered = fullList.filter(t => t.modelDisplayName === selectedModel);
       }
+
+      if (simpleMode) {
+        const latestItems = filtered.slice(0, SIMPLE_TELEMETRY_LIMIT);
+        if (telemetryCompactVal) {
+          telemetryCompactVal.textContent = filtered.length > SIMPLE_TELEMETRY_LIMIT
+            ? `· latest ${latestItems.length} of ${filtered.length}`
+            : `· ${filtered.length} step${filtered.length === 1 ? '' : 's'}`;
+        }
+        renderStepList(latestItems, filtered, 0);
+        if (telemetryPagination) telemetryPagination.classList.add('hidden');
+        return;
+      }
+
       if (telemetryCompactVal) telemetryCompactVal.textContent = `· ${filtered.length} step${filtered.length === 1 ? '' : 's'}`;
 
       const totalPages = Math.ceil(filtered.length / TELEMETRY_PAGE_SIZE) || 1;
@@ -1303,14 +1333,15 @@
 
     telemetryList.innerHTML = prompts.map(p => {
       const isLatest = p.promptNumber === latestPromptNum;
-      const previewText = p.userPromptPreview ? truncate(p.userPromptPreview, 26) : '';
+      const previewText = p.userPromptPreview ? truncate(p.userPromptPreview, simpleMode ? 18 : 26) : '';
       const cacheClass = getCacheBadgeClass(p.cacheEfficiencyPct);
       const key = itemKey('prompt', p.promptNumber);
       const isCompact = isItemCompact(key);
 
       let routingHtml = '';
       if (telemetryFields.model && p.modelsUsedShort && p.modelsUsedShort.length > 0) {
-        routingHtml = p.modelsUsedShort.map(m =>
+        const modelsToShow = simpleMode ? p.modelsUsedShort.slice(-1) : p.modelsUsedShort;
+        routingHtml = modelsToShow.map(m =>
           `<span class="routing-pill ${getModelPillClass(m)}" title="${escapeHtml(m)}">${escapeHtml(m)}</span>`
         ).join('<span class="routing-arrow">→</span>');
       }
@@ -1321,17 +1352,24 @@
       const callsText = `${p.llmCallsCount} call${p.llmCallsCount === 1 ? '' : 's'}`;
       const showAnyField = showChatPrimary || Boolean(routingHtml) || telemetryFields.calls || telemetryFields.cache;
 
-      const cacheLine = formatCacheStatusLine(p.gapSincePrevPromptMs, p.promptCacheStatus, p.cachedModelShort || p.modelsUsedShort?.[0], p.prevPromptModelShort);
       const cacheDot = (p.promptCacheStatus === 'warm_hit' || p.promptCacheStatus === 'cross_model_hit') ? 'dot-cache' : 'dot-total';
-      const ledgerHtml = renderLedgerRows([
-        { dot: 'dot-input', label: 'New Input', value: formatNum(p.newInput) },
-        { dot: 'dot-cache', label: 'Cache Read', value: formatNum(p.cacheRead), valClass: 'val-cache' },
-        { dot: 'dot-think', label: 'Thinking', value: formatNum(p.thinking), valClass: 'val-think' },
-        { dot: 'dot-output', label: 'Output', value: formatNum(p.output) },
-        ...quotaCostRows((currentTelemetry?.turns || []).filter(x => x.promptNumber === p.promptNumber).map(turnQuotaEntry)),
-        { dot: cacheDot, label: 'Cache', value: renderCacheStatusChips(p.gapSincePrevPromptMs, p.promptCacheStatus, p.cachedModelShort || p.modelsUsedShort?.[0], p.prevPromptModelShort), html: true },
-        { dot: 'dot-total', label: 'Ending Context', value: `${formatCompactNum(p.endingContext)} (${p.endingContextPct}%)`, valClass: 'val-strong' }
-      ]);
+      const ledgerRows = simpleMode
+        ? [
+            { dot: 'dot-cache', label: 'Cache Read', value: `${formatCompactNum(p.cacheRead)} (${p.cacheEfficiencyPct}%)`, valClass: 'val-cache' },
+            { dot: 'dot-input', label: 'New Input', value: formatCompactNum(p.newInput) },
+            { dot: 'dot-output', label: 'Output', value: formatCompactNum(p.output) },
+            { dot: 'dot-total', label: 'Context', value: `${formatCompactNum(p.endingContext)} (${p.endingContextPct}%)`, valClass: 'val-strong' }
+          ]
+        : [
+            { dot: 'dot-input', label: 'New Input', value: formatNum(p.newInput) },
+            { dot: 'dot-cache', label: 'Cache Read', value: formatNum(p.cacheRead), valClass: 'val-cache' },
+            { dot: 'dot-think', label: 'Thinking', value: formatNum(p.thinking), valClass: 'val-think' },
+            { dot: 'dot-output', label: 'Output', value: formatNum(p.output) },
+            ...quotaCostRows((currentTelemetry?.turns || []).filter(x => x.promptNumber === p.promptNumber).map(turnQuotaEntry)),
+            { dot: cacheDot, label: 'Cache', value: renderCacheStatusChips(p.gapSincePrevPromptMs, p.promptCacheStatus, p.cachedModelShort || p.modelsUsedShort?.[0], p.prevPromptModelShort), html: true },
+            { dot: 'dot-total', label: 'Ending Context', value: `${formatCompactNum(p.endingContext)} (${p.endingContextPct}%)`, valClass: 'val-strong' }
+          ];
+      const ledgerHtml = renderLedgerRows(ledgerRows);
 
       return `
         <div class="telemetry-item${isCompact ? ' compact' : ''}" data-key="${escapeHtml(key)}" role="button" tabindex="0" aria-expanded="${!isCompact}" title="Click to ${isCompact ? 'expand' : 'compact'}">
@@ -1339,14 +1377,17 @@
             <div class="item-title">
               <span class="num-capsule${isLatest ? ' current' : ''}" title="${isLatest ? 'Current prompt' : `Prompt ${p.promptNumber}`}">${p.promptNumber}</span>
               ${showChatPrimary ? `<span class="prompt-preview" title="${escapeHtml(p.userPromptPreview)}">${escapeHtml(previewText)}</span>` : ''}
-              ${promoteModelToTop ? `<span class="item-inline-routing">${routingHtml}</span>` : ''}
-              ${telemetryFields.calls ? `<span class="calls-count">${hasLeadingItem ? '· ' : ''}${callsText}</span>` : ''}
+              ${(promoteModelToTop || (simpleMode && routingHtml)) ? `<span class="item-inline-routing">${routingHtml}</span>` : ''}
+              ${(!simpleMode && telemetryFields.calls) ? `<span class="calls-count">${hasLeadingItem ? '· ' : ''}${callsText}</span>` : ''}
             </div>
-            ${telemetryFields.cache
-              ? `<span class="item-cache-badge ${cacheClass}">${p.cacheEfficiencyPct}% cache</span>`
-              : (!showAnyField ? `<span class="item-context">${p.endingContextPct}% ctx</span>` : '')}
+            <span class="item-top-right">
+              ${simpleMode ? `<span class="item-simple-tok" title="${formatNum(p.totalTokens)} total tokens">${formatCompactNum(p.totalTokens)}</span>` : ''}
+              ${telemetryFields.cache
+                ? `<span class="item-cache-badge ${cacheClass}">${p.cacheEfficiencyPct}%${simpleMode ? '' : ' cache'}</span>`
+                : (!showAnyField ? `<span class="item-context">${p.endingContextPct}% ctx</span>` : '')}
+            </span>
           </div>
-          ${!promoteModelToTop && routingHtml ? `<div class="item-routing-row">${routingHtml}</div>` : ''}
+          ${(!simpleMode && !promoteModelToTop && routingHtml) ? `<div class="item-routing-row">${routingHtml}</div>` : ''}
           ${ledgerHtml}
         </div>
       `;
@@ -1410,17 +1451,24 @@
         bracketHtml = `<span class="step-group-bracket" title="${escapeHtml(promptTitle)}" aria-label="${escapeHtml(promptTitle)}"></span>`;
       }
 
-      const stepCacheLine = formatCacheStatusLine(t.gapSincePrevTurnMs, t.cacheStatus, modelLabel, t.prevModelShortName);
       const stepCacheDot = (t.cacheStatus === 'warm_hit' || t.cacheStatus === 'cross_model_hit') ? 'dot-cache' : 'dot-total';
-      const ledgerHtml = renderLedgerRows([
-        { dot: 'dot-input', label: 'New Input', value: formatNum(t.inputTokens) },
-        { dot: 'dot-cache', label: 'Cache Read', value: formatNum(t.cacheReadTokens), valClass: 'val-cache' },
-        { dot: 'dot-think', label: 'Thinking', value: formatNum(t.thinkingTokens), valClass: 'val-think' },
-        { dot: 'dot-output', label: 'Output', value: formatNum(t.outputTokens) },
-        ...quotaCostRows([turnQuotaEntry(t)]),
-        { dot: stepCacheDot, label: 'Cache', value: renderCacheStatusChips(t.gapSincePrevTurnMs, t.cacheStatus, modelLabel, t.prevModelShortName), html: true },
-        { dot: 'dot-total', label: 'Total Turn', value: formatNum(t.totalTurnTokens), valClass: 'val-strong' }
-      ]);
+      const stepLedgerRows = simpleMode
+        ? [
+            { dot: 'dot-cache', label: 'Cache Read', value: `${formatCompactNum(t.cacheReadTokens)} (${t.cacheEfficiencyPct}%)`, valClass: 'val-cache' },
+            { dot: 'dot-input', label: 'New Input', value: formatCompactNum(t.inputTokens) },
+            { dot: 'dot-output', label: 'Output', value: formatCompactNum(t.outputTokens) },
+            { dot: 'dot-total', label: 'Total Turn', value: formatCompactNum(t.totalTurnTokens), valClass: 'val-strong' }
+          ]
+        : [
+            { dot: 'dot-input', label: 'New Input', value: formatNum(t.inputTokens) },
+            { dot: 'dot-cache', label: 'Cache Read', value: formatNum(t.cacheReadTokens), valClass: 'val-cache' },
+            { dot: 'dot-think', label: 'Thinking', value: formatNum(t.thinkingTokens), valClass: 'val-think' },
+            { dot: 'dot-output', label: 'Output', value: formatNum(t.outputTokens) },
+            ...quotaCostRows([turnQuotaEntry(t)]),
+            { dot: stepCacheDot, label: 'Cache', value: renderCacheStatusChips(t.gapSincePrevTurnMs, t.cacheStatus, modelLabel, t.prevModelShortName), html: true },
+            { dot: 'dot-total', label: 'Total Turn', value: formatNum(t.totalTurnTokens), valClass: 'val-strong' }
+          ];
+      const ledgerHtml = renderLedgerRows(stepLedgerRows);
 
       return `
         <div class="telemetry-item step-item${groupClass}${isCompact ? ' compact' : ''}" data-key="${escapeHtml(key)}"${promptDataAttr} role="button" tabindex="0" aria-expanded="${!isCompact}" title="Click to ${isCompact ? 'expand' : 'compact'}">
@@ -1431,9 +1479,12 @@
               ${telemetryFields.chat ? `<span class="step-indices" title="${escapeHtml(stepRange.title)}">Step ${escapeHtml(stepRange.label)}</span>` : ''}
               ${telemetryFields.model ? `<span class="routing-pill ${getModelPillClass(modelLabel)}" title="${escapeHtml(modelFullName)}">${escapeHtml(modelLabel)}</span>` : ''}
             </div>
-            ${telemetryFields.cache
-              ? `<span class="item-cache-badge ${cacheClass}">${t.cacheEfficiencyPct}% cache</span>`
-              : (!showAnyField ? `<span class="item-context">${formatCompactNum(t.totalTurnTokens)}</span>` : '')}
+            <span class="item-top-right">
+              ${simpleMode ? `<span class="item-simple-tok" title="${formatNum(t.totalTurnTokens)} total tokens">${formatCompactNum(t.totalTurnTokens)}</span>` : ''}
+              ${telemetryFields.cache
+                ? `<span class="item-cache-badge ${cacheClass}">${t.cacheEfficiencyPct}%${simpleMode ? '' : ' cache'}</span>`
+                : (!showAnyField ? `<span class="item-context">${formatCompactNum(t.totalTurnTokens)}</span>` : '')}
+            </span>
           </div>
           ${ledgerHtml}
         </div>
@@ -1789,6 +1840,8 @@
 
   // ---------- Section Visibility, Compact & Popovers ----------
   function applySectionStates() {
+    document.body.classList.toggle('simple-mode', simpleMode);
+    if (simpleModeToggle) simpleModeToggle.checked = simpleMode;
     document.querySelectorAll('[data-section]').forEach((sec) => {
       const key = sec.dataset.section;
       const visible = sectionVisibility[key] !== false;
@@ -1928,6 +1981,26 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeAllMenus();
   });
+
+  if (simpleModeToggle) {
+    simpleModeToggle.addEventListener('change', () => {
+      simpleMode = simpleModeToggle.checked;
+      try {
+        localStorage.setItem('token_meter_simple_mode', String(simpleMode));
+      } catch {}
+      itemCompactOverrides.clear();
+      if (simpleMode) {
+        sectionCompact.genOutput = true;
+        sectionCompact.sessionTotals = true;
+      } else {
+        sectionCompact.genOutput = false;
+        sectionCompact.sessionTotals = false;
+      }
+      saveJsonPref('token_meter_section_compact', sectionCompact);
+      applySectionStates();
+      renderTelemetryList();
+    });
+  }
 
   document.querySelectorAll('[data-section-toggle]').forEach((cb) => {
     cb.addEventListener('change', () => {

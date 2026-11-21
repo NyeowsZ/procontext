@@ -1569,3 +1569,33 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* Model Separation rows: plain brand-colored name, no pill */
 .quota-model-name { font-size: 11px; font-weight: 500; color: var(--brand); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Simple Mode: essential data only + latest 5 compact telemetry items */
+.item-top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.item-simple-tok {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--cx-fg-2);
+  font-variant-numeric: tabular-nums;
+}
+body.simple-mode #compactionLastRow { display: none; }
+body.simple-mode #cacheLifespanStrip .cache-meta-row:not(:last-child) { display: none; }
+body.simple-mode #cacheLifespanStrip {
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+body.simple-mode #cacheLifespanStrip .cat-row.cache-meta-row {
+  padding: 4px 6px;
+  margin: 0 -6px;
+}
+body.simple-mode #compactAllBtn,
+body.simple-mode #telemetryMenuBtn {
+  display: none;
+}

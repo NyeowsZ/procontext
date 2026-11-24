@@ -13,10 +13,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getConversationTokenTelemetry, getModelLimits } from './telemetry.mjs';
 import {
   getGlobalUsage,
+  getGlobalLogAudit,
   saveGlobalSnapshot,
   resetGlobalUsage,
   deleteGlobalSnapshot,
-  importGlobalData
+  importGlobalData,
+  takeAllToLog,
+  takeConvoToLog
 } from './global-store.mjs';
 
 function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
@@ -145,6 +148,26 @@ if (SidecarApp && hasSidecarEnv) {
     }
   }, 'POST');
 
+  app.api('/api/global/audit', async (data) => {
+    try {
+      const cap5h = data?.cap5h ? Number(data.cap5h) : null;
+      return await getGlobalLogAudit({ cap5hTokens: Number.isFinite(cap5h) ? cap5h : null });
+    } catch (err) {
+      return { error: err.message };
+    }
+  }, 'GET');
+
+  app.api('/api/global/take', async (data) => {
+    try {
+      if (data?.mode === 'convo' || data?.cascadeId) {
+        return await takeConvoToLog(data?.cascadeId || null);
+      }
+      return await takeAllToLog();
+    } catch (err) {
+      return { error: err.message };
+    }
+  }, 'POST');
+
   app.run();
   console.log(`[TokenContextMeter] Sidecar initialized on port ${process.env.ANTIGRAVITY_SIDECAR_WEB_PORT}`);
 } else {
@@ -259,6 +282,35 @@ if (SidecarApp && hasSidecarEnv) {
       try {
         const body = await readJsonBody(req);
         const data = await importGlobalData(body);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/global/audit' && req.method === 'GET') {
+      try {
+        const capParam = url.searchParams.get('cap5h');
+        const cap5h = capParam ? Number(capParam) : null;
+        const data = await getGlobalLogAudit({ cap5hTokens: Number.isFinite(cap5h) ? cap5h : null });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/global/take' && req.method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const data = (body?.mode === 'convo' || body?.cascadeId)
+          ? await takeConvoToLog(body?.cascadeId || null)
+          : await takeAllToLog();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));
       } catch (err) {

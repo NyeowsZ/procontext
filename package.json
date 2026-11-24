@@ -1,0 +1,12 @@
+{
+  "name": "token-context-meter",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Procontext: Real-time server-side token usage telemetry, append-only global SQLite WAL log, and live context window meter.",
+  "scripts": {
+    "global:take": "node sidecars/meter/global-check.mjs take",
+    "global:check": "node sidecars/meter/global-check.mjs check",
+    "test": "node --test test/*.test.mjs"
+  }
+}

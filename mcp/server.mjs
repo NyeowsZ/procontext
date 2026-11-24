@@ -8,7 +8,12 @@
 
 import readline from 'node:readline';
 import { getConversationTokenTelemetry, getModelLimits } from '../sidecars/meter/telemetry.mjs';
-import { getGlobalUsage } from '../sidecars/meter/global-store.mjs';
+import {
+  getGlobalLogAudit,
+  getGlobalUsage,
+  takeAllToLog,
+  takeConvoToLog
+} from '../sidecars/meter/global-store.mjs';
 
 function formatNumber(num) {
   return (num || 0).toLocaleString();
@@ -202,11 +207,95 @@ const TOOLS = [
         }
       }
     }
+  },
+  {
+    name: 'get_global_audit',
+    description: 'Read-only audit of the append-only global-log.db: 5-hour and 7-day rolling token usage, per-user/userdata splits, 5h budget negative overage, and agy-fast inner tool statistics.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cap_5h_tokens: {
+          type: 'number',
+          description: 'Optional 5-hour token budget to compute remaining/negative overage.'
+        },
+        user_id: {
+          type: 'string',
+          description: 'Optional filter by canonical user_id (e.g. email).'
+        },
+        userdata_key: {
+          type: 'string',
+          description: 'Optional filter by userdata_key (e.g. "desktop:default").'
+        }
+      }
+    }
+  },
+  {
+    name: 'capture_global_log',
+    description: 'One-click append into global-log.db: capture all unseen conversations/quotas ("all") or archive a complete single conversation ("session").',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['all', 'session'],
+          description: '"all" captures across discovered userdata roots; "session" archives one conversation completely.'
+        },
+        conversation_id: {
+          type: 'string',
+          description: 'Optional cascadeId when mode is "session" (defaults to active conversation).'
+        }
+      }
+    }
   }
 ];
 
 async function handleToolCall(name, args) {
   const modelFilter = (args?.model || 'all').trim();
+
+  if (name === 'get_global_audit') {
+    const audit = await getGlobalLogAudit({
+      cap5hTokens: args?.cap_5h_tokens ? Number(args.cap_5h_tokens) : null,
+      userId: args?.user_id || null,
+      userdataKey: args?.userdata_key || null
+    });
+    if (!audit.available) {
+      return {
+        content: [{ type: 'text', text: '⚠️ `global-log.db` has not been created yet. Run `capture_global_log` or `npm run global:take` first.' }]
+      };
+    }
+    const o = audit.overall;
+    const lines = [
+      `### 📒 Global Append-Log Audit (\`maxSeq=${audit.maxSeq}\`, \`events=${audit.totalEvents}\`)`,
+      `- **5-Hour Rolling:** ${formatCompactNum(o.window5h.totals.totalProcessedTokens)} processed (${o.window5h.totals.turns} turns)`,
+      `- **7-Day Rolling:** ${formatCompactNum(o.window7d.totals.totalProcessedTokens)} processed (${o.window7d.totals.turns} turns)`,
+      `- **agy-fast Tool Calls:** ${o.agyFast.totalCalls} (\`batch_search=${o.agyFast.batch_search.calls}\`, \`apply_edits=${o.agyFast.apply_edits.calls}\`, \`read_slices=${o.agyFast.read_slices.calls}\`)`
+    ];
+    if (o.window5h.quota.capAnalysis) {
+      const c = o.window5h.quota.capAnalysis;
+      lines.push(`- **5h Cap (${formatCompactNum(c.cap5hTokens)}):** ${c.isNegative ? `NEGATIVE -${formatCompactNum(c.negativeTokens)}` : `${formatCompactNum(c.remainingBudgetTokens)} remaining`} (${c.utilizationPct}%)`);
+    }
+    if (audit.byAccount.length) {
+      lines.push(``, `#### Per-User / Userdata Splits:`);
+      for (const a of audit.byAccount) {
+        lines.push(`- **${a.userId}** (\`${a.userdataKey}\`): 5h=${formatCompactNum(a.window5h.totals.totalProcessedTokens)} | 7d=${formatCompactNum(a.window7d.totals.totalProcessedTokens)}`);
+      }
+    }
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  if (name === 'capture_global_log') {
+    const mode = args?.mode === 'session' ? 'session' : 'all';
+    const res = mode === 'session'
+      ? await takeConvoToLog(args?.conversation_id || null)
+      : await takeAllToLog();
+    if (!res?.ok) {
+      return { content: [{ type: 'text', text: `⚠️ Capture failed: ${res?.error || 'unknown error'}` }] };
+    }
+    const summary = mode === 'session'
+      ? `Archived conversation \`${res.cascadeId}\` for \`${res.userId}\`: **+${res.inserted}** events (${res.turnCount} turns, ${res.stepCount} steps).`
+      : `Captured **+${res.inserted}** events (${res.ignored} deduped) across ${res.conversationsScanned} conversations in [${res.roots.join(', ')}] for \`${res.userId}\`.`;
+    return { content: [{ type: 'text', text: `✅ ${summary}` }] };
+  }
 
   if (name === 'get_quota_status') {
     const globalUsage = await getGlobalUsage().catch(() => null);
@@ -424,7 +513,7 @@ rl.on('line', async (line) => {
         },
         serverInfo: {
           name: 'token-context-meter',
-          version: '1.0.0'
+          version: '1.1.0'
         }
       });
       return;

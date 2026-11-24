@@ -221,6 +221,8 @@
   const globalOutputPct = document.getElementById('globalOutputPct');
   const snapshotNameInput = document.getElementById('snapshotNameInput');
   const storeSnapshotBtn = document.getElementById('storeSnapshotBtn');
+  const takeAllLogBtn = document.getElementById('takeAllLogBtn');
+  const takeConvoLogBtn = document.getElementById('takeConvoLogBtn');
   const resetGlobalBtn = document.getElementById('resetGlobalBtn');
   const exportGlobalBtn = document.getElementById('exportGlobalBtn');
   const importGlobalBtn = document.getElementById('importGlobalBtn');
@@ -2650,6 +2652,55 @@
       } finally {
         storeSnapshotBtn.disabled = false;
         storeSnapshotBtn.textContent = orig;
+      }
+    });
+  }
+
+  if (takeAllLogBtn) {
+    takeAllLogBtn.addEventListener('click', async () => {
+      const orig = takeAllLogBtn.textContent;
+      takeAllLogBtn.disabled = true;
+      takeAllLogBtn.textContent = 'Taking…';
+      try {
+        const res = await fetch(apiUrl('/api/global/take'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'all' })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        takeAllLogBtn.textContent = `+${data.inserted || 0}`;
+        setTimeout(() => { takeAllLogBtn.textContent = orig; }, 2200);
+        await fetchGlobalUsage();
+      } catch (err) {
+        console.error('Take All failed:', err);
+        takeAllLogBtn.textContent = orig;
+      } finally {
+        takeAllLogBtn.disabled = false;
+      }
+    });
+  }
+
+  if (takeConvoLogBtn) {
+    takeConvoLogBtn.addEventListener('click', async () => {
+      const orig = takeConvoLogBtn.textContent;
+      takeConvoLogBtn.disabled = true;
+      takeConvoLogBtn.textContent = 'Saving…';
+      try {
+        const res = await fetch(apiUrl('/api/global/take'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'convo', cascadeId: currentTelemetry?.cascadeId || null })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        takeConvoLogBtn.textContent = `+${data.inserted || 0}`;
+        setTimeout(() => { takeConvoLogBtn.textContent = orig; }, 2200);
+      } catch (err) {
+        console.error('Take Convo failed:', err);
+        takeConvoLogBtn.textContent = orig;
+      } finally {
+        takeConvoLogBtn.disabled = false;
       }
     });
   }

@@ -11,7 +11,16 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { callLanguageServerRpc, getCurrentAccount, getQuotaPools } from './telemetry.mjs';
+import { callLanguageServerRpc, getActiveCascadeId, getCurrentAccount, getQuotaPools } from './telemetry.mjs';
+import { closeLogDb, openLogDb } from './log-db.mjs';
+import {
+  captureLiveAccountAndQuotas,
+  importLegacyStore,
+  ingestConversation,
+  takeAll,
+  takeConvo
+} from './ingest.mjs';
+import { computeGlobalAudit } from './global-check.mjs';
 
 const STORE_PATH = join(homedir(), '.gemini', 'config', 'plugins', 'token-context-meter', 'usage-store.json');
 const CONV_DIR = join(homedir(), '.gemini', 'antigravity', 'conversations');
@@ -265,7 +274,7 @@ async function fetchConversationSummary(cascadeId) {
   }
   totals.toolCalls = toolCallsCount;
 
-  return { totals, byModel };
+  return { totals, byModel, trajResp: resp };
 }
 
 function formatAutoDateName(date = new Date()) {
@@ -550,6 +559,7 @@ export async function getGlobalUsage() {
     const workSlice = toFetch.slice(0, MAX_PER_CALL);
     remainingToScan = Math.max(0, toFetch.length - workSlice.length);
 
+    let fetchedWithResp = [];
     const batchSize = 8;
     for (let i = 0; i < workSlice.length; i += batchSize) {
       const batch = workSlice.slice(i, i + batchSize);
@@ -558,14 +568,38 @@ export async function getGlobalUsage() {
           const summary = await fetchConversationSummary(f.id);
           return { id: f.id, mtime: f.mtime, ...summary };
         } catch {
-          return { id: f.id, mtime: f.mtime, totals: emptyTotals(), byModel: {} };
+          return { id: f.id, mtime: f.mtime, totals: emptyTotals(), byModel: {}, trajResp: null };
         }
       }));
       for (const r of results) {
         store.convCache[r.id] = { mtime: r.mtime, totals: r.totals, byModel: r.byModel };
+        if (r.trajResp) fetchedWithResp.push(r);
         dirty = true;
       }
     }
+
+    // Fail-open incremental append to global-log.db (zero extra trajectory RPCs)
+    try {
+      const logDb = await openLogDb();
+      if (logDb) {
+        try {
+          importLegacyStore(logDb);
+          await captureLiveAccountAndQuotas({ db: logDb });
+          for (const r of fetchedWithResp) {
+            await ingestConversation({
+              db: logDb,
+              cascadeId: r.id,
+              userId: account.accountKey,
+              userdataKey: 'desktop:default',
+              fileMtimeMs: r.mtime,
+              trajectoryResp: r.trajResp
+            });
+          }
+        } finally {
+          closeLogDb(logDb);
+        }
+      }
+    } catch {}
   }
 
   const { allTimeTotals, allTimeByModel } = computeAllTimeFromCache(store.convCache);
@@ -693,4 +727,28 @@ export async function importGlobalData(payload) {
   if (accountBucket.snapshots.length > 120) accountBucket.snapshots = accountBucket.snapshots.slice(0, 120);
   saveStore(store);
   return { importedCount: added, snapshots: accountBucket.snapshots };
+}
+
+export async function takeAllToLog(opts = {}) {
+  return await takeAll(opts);
+}
+
+export async function takeConvoToLog(cascadeId = null, opts = {}) {
+  const resolvedId = cascadeId || getActiveCascadeId(null);
+  if (!resolvedId) {
+    throw new Error('No active conversation or cascadeId found.');
+  }
+  return await takeConvo({ cascadeId: resolvedId, ...opts });
+}
+
+export async function getGlobalLogAudit(opts = {}) {
+  const db = await openLogDb({ readonly: true });
+  if (!db) {
+    return { available: false, totalEvents: 0 };
+  }
+  try {
+    return { available: true, ...computeGlobalAudit(db, opts) };
+  } finally {
+    closeLogDb(db);
+  }
 }

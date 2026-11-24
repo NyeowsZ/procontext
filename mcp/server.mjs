@@ -306,10 +306,13 @@ async function handleToolCall(name, args) {
     }
 
     const acct = globalUsage.account || {};
+    const r5 = globalUsage.quota5h?.rolling;
+    const r7 = globalUsage.quota7d?.rolling;
     const output = [
       `### ⏱️ Antigravity Account & Quotas`,
       `- **Active Account:** **${acct.name || 'User'}** (\`${acct.email || 'local'}\` · **${acct.planName || 'Standard'}** Plan)`,
       `- **Active Conversations:** ${globalUsage.conversationCount || 0} tracked (${globalUsage.pendingCount || 0} indexing)`,
+      `- **Rolling Consumption:** **5h:** ${formatCompactNum(r5?.totals?.totalProcessedTokens || 0)} (${r5?.conversations || 0} chats) · **7d:** ${formatCompactNum(r7?.totals?.totalProcessedTokens || 0)} (${r7?.conversations || 0} chats)`,
       ``,
       `#### 📊 Live Quota Pools & Burn Rates (${modelFilter === 'all' ? 'All Models' : `Filtered to \`${modelFilter}\``}):`
     ];
@@ -513,7 +516,7 @@ rl.on('line', async (line) => {
         },
         serverInfo: {
           name: 'token-context-meter',
-          version: '1.1.0'
+          version: '1.1.1'
         }
       });
       return;

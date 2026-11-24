@@ -36,6 +36,8 @@
   let currentTelemetry = null;
   let mainSubagents = [];
   let globalUsageData = null;
+  let quota5hData = null;
+  let quota7dData = null;
   let activeTab = 'session'; // 'session' | 'agents' | 'global'
   let selectedModel = 'all';
   let inspectedAgent = null; // { conversationId, role } or null
@@ -57,6 +59,11 @@
   const SIMPLE_TELEMETRY_LIMIT = 5;
   let compactAlarmK = parseFloat(localStorage.getItem('token_meter_compact_alarm_k') ?? '250');
   if (!isFinite(compactAlarmK) || compactAlarmK < 0) compactAlarmK = 250;
+  let compactCritK = parseFloat(localStorage.getItem('token_meter_compact_crit_k') ?? '500');
+  if (!isFinite(compactCritK) || compactCritK < 0) compactCritK = 500;
+  let hudQuotaWindow = localStorage.getItem('token_meter_hud_quota_window') === '7d' ? '7d' : '5h';
+  let lastGlobalFetchMs = 0;
+  let lastObservedTurnsCount = -1;
   // Default all telemetry items to compacted on load
   let defaultItemsCompact = true;
   let itemCompactOverrides = new Set();
@@ -140,12 +147,20 @@
   const contextPctValue = document.getElementById('contextPctValue');
   const healthBadge = document.getElementById('healthBadge');
   const windowCompactAlarmBtn = document.getElementById('windowCompactAlarmBtn');
-  const windowCompactAlarmInlineInput = document.getElementById('windowCompactAlarmInlineInput');
+  const windowContextFlagPopover = document.getElementById('windowContextFlagPopover');
+  const windowWarnFlagInput = document.getElementById('windowWarnFlagInput');
+  const windowCritFlagInput = document.getElementById('windowCritFlagInput');
   const hudCompactAlarmBtn = document.getElementById('hudCompactAlarmBtn');
-  const hudCompactAlarmInlineInput = document.getElementById('hudCompactAlarmInlineInput');
+  const hudContextFlagPopover = document.getElementById('hudContextFlagPopover');
+  const hudWarnFlagInput = document.getElementById('hudWarnFlagInput');
+  const hudCritFlagInput = document.getElementById('hudCritFlagInput');
+  const hudQuotaSwitchBtn = document.getElementById('hudQuotaSwitchBtn');
   const compactAlarmKInput = document.getElementById('compactAlarmKInput');
   const compactAlarmOffBtn = document.getElementById('compactAlarmOffBtn');
+  const compactCritKInput = document.getElementById('compactCritKInput');
+  const compactCritOffBtn = document.getElementById('compactCritOffBtn');
   const contextAlarmTick = document.getElementById('contextAlarmTick');
+  const contextCritTick = document.getElementById('contextCritTick');
   const windowRatioVal = document.getElementById('windowRatioVal');
   const contextProgressBar = document.getElementById('contextProgressBar');
   const activeTokensVal = document.getElementById('activeTokensVal');
@@ -278,8 +293,7 @@
     const lower = name.toLowerCase();
     if (lower.includes('high')) return 'flash-high';
     if (lower.includes('low')) return 'flash-low';
-    if (lower.includes('pro') || lower.includes('opus')) return 'pro';
-    if (lower.includes('argon') || lower.includes('neon')) return 'argon';
+    if (lower.includes('pro') || lower.includes('opus') || lower.includes('neon') || lower.includes('carbon') || lower.includes('hydrogen')) return 'pro';
     return '';
   }
 
@@ -317,6 +331,14 @@
       updateModelDropdown();
       renderDashboard(data);
       renderAgentsList();
+
+      const curTurns = data?.cumulative?.totalTurns ?? -1;
+      if (curTurns !== lastObservedTurnsCount) {
+        lastObservedTurnsCount = curTurns;
+        if (Date.now() - lastGlobalFetchMs > 15000) {
+          fetchGlobalUsage();
+        }
+      }
     } catch (err) {
       console.warn('Telemetry sync error:', err.message);
     }
@@ -324,12 +346,14 @@
 
   async function fetchGlobalUsage() {
     try {
+      lastGlobalFetchMs = Date.now();
       const res = await fetch(apiUrl('/api/global'));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
       globalUsageData = data;
+      syncQuotaWindowVars(data);
       updateModelDropdown();
       renderGlobalView(data);
       if (data.pendingCount > 0 && activeTab === 'global') {
@@ -436,12 +460,13 @@
 
     contextPctValue.textContent = `${pct.toFixed(1)}% used`;
 
+    const flagState = getContextFlagState(activeTok, maxLim);
     let color = 'var(--tm-ok)';
     let healthLabel = 'Optimal';
-    if (pct >= 80) {
+    if (flagState.isRed) {
       color = 'var(--tm-crit)';
       healthLabel = 'Critical';
-    } else if (pct >= 50) {
+    } else if (flagState.isYellow) {
       color = 'var(--tm-warn)';
       healthLabel = 'Moderate';
     }
@@ -611,6 +636,23 @@
     return remSec > 0 ? `${mins}m ${remSec}s` : `${mins}m`;
   }
 
+  function formatKLabel(valK) {
+    if (!valK || valK <= 0) return 'Off';
+    return `${Number.isInteger(valK) ? String(valK) : valK.toFixed(1)}K`;
+  }
+
+  function getContextFlagState(activeTokens, maxLimitTokens) {
+    const actTok = Number(activeTokens) || 0;
+    const maxTok = Number(maxLimitTokens) || 1048576;
+    const actK = actTok / 1000;
+    const pct = Math.min(100, Math.max(0, maxTok > 0 ? (actTok / maxTok) * 100 : 0));
+    const warnOff = !compactAlarmK || compactAlarmK <= 0;
+    const critOff = !compactCritK || compactCritK <= 0;
+    const isRed = !critOff ? (actK >= compactCritK) : (pct >= 80);
+    const isYellow = !isRed && (!warnOff ? (actK >= compactAlarmK) : (pct >= 50));
+    return { actK, pct, warnOff, critOff, isYellow, isRed };
+  }
+
   function updateCompactAlarmUi(activeTokens = null, maxLimitTokens = null) {
     const actTok = activeTokens != null
       ? activeTokens
@@ -618,43 +660,46 @@
     const maxTok = maxLimitTokens != null
       ? maxLimitTokens
       : (currentTelemetry?.liveContext?.maxLimit || 1048576);
-    const actK = actTok / 1000;
-    const isOff = !compactAlarmK || compactAlarmK <= 0;
-    const isTriggered = !isOff && actK >= compactAlarmK;
-    const cleanK = Number.isInteger(compactAlarmK) ? String(compactAlarmK) : compactAlarmK.toFixed(1);
-    const label = '_>';
-    const title = isOff
-      ? 'Compact alarm: Off (click to set K)'
-      : (isTriggered
-          ? `Compact alarm reached: ${cleanK}K (click to set K)`
-          : `Compact alarm: ${cleanK}K (click to set K)`);
+    const { warnOff, critOff, isYellow, isRed } = getContextFlagState(actTok, maxTok);
+    const warnLabel = formatKLabel(compactAlarmK);
+    const critLabel = formatKLabel(compactCritK);
+    const allOff = warnOff && critOff;
+    const statusSuffix = isRed ? ' [Red flag]' : (isYellow ? ' [Yellow flag]' : '');
+    const title = `Context flags · Yellow: ${warnLabel} · Red: ${critLabel}${statusSuffix} (click to edit)`;
 
     [windowCompactAlarmBtn, hudCompactAlarmBtn].forEach((btn) => {
       if (!btn) return;
-      btn.textContent = label;
+      btn.textContent = '_>';
       btn.title = title;
-      btn.classList.toggle('triggered', isTriggered);
-      btn.classList.toggle('off', isOff);
+      btn.classList.toggle('triggered', isYellow);
+      btn.classList.toggle('triggered-crit', isRed);
+      btn.classList.toggle('off', allOff);
     });
 
-    if (contextAlarmTick) {
-      const tickPct = (!isOff && maxTok > 0) ? Math.min(100, Math.max(0, ((compactAlarmK * 1000) / maxTok) * 100)) : 0;
-      if (isOff || tickPct <= 0 || tickPct >= 100) {
-        contextAlarmTick.style.display = 'none';
+    const syncTick = (el, valK, isHit, label) => {
+      if (!el) return;
+      const off = !valK || valK <= 0;
+      const tickPct = (!off && maxTok > 0) ? Math.min(100, Math.max(0, ((valK * 1000) / maxTok) * 100)) : 0;
+      if (off || tickPct <= 0 || tickPct >= 100) {
+        el.style.display = 'none';
       } else {
-        contextAlarmTick.style.display = '';
-        contextAlarmTick.style.left = `${tickPct.toFixed(1)}%`;
-        contextAlarmTick.classList.toggle('triggered', isTriggered);
-        contextAlarmTick.title = `Compact alarm threshold: ${cleanK}K tokens`;
+        el.style.display = '';
+        el.style.left = `${tickPct.toFixed(1)}%`;
+        el.classList.toggle('triggered', isHit);
+        el.title = `${label}: ${formatKLabel(valK)} tokens`;
       }
-    }
+    };
+    syncTick(contextAlarmTick, compactAlarmK, isYellow || isRed, 'Yellow flag');
+    syncTick(contextCritTick, compactCritK, isRed, 'Red flag');
 
-    if (compactAlarmKInput && document.activeElement !== compactAlarmKInput) {
-      compactAlarmKInput.value = isOff ? '' : String(compactAlarmK);
-    }
-    if (compactAlarmOffBtn) {
-      compactAlarmOffBtn.classList.toggle('active', isOff);
-    }
+    [compactAlarmKInput, hudWarnFlagInput, windowWarnFlagInput].forEach((inp) => {
+      if (inp && document.activeElement !== inp) inp.value = warnOff ? '' : String(compactAlarmK);
+    });
+    [compactCritKInput, hudCritFlagInput, windowCritFlagInput].forEach((inp) => {
+      if (inp && document.activeElement !== inp) inp.value = critOff ? '' : String(compactCritK);
+    });
+    if (compactAlarmOffBtn) compactAlarmOffBtn.classList.toggle('active', warnOff);
+    if (compactCritOffBtn) compactCritOffBtn.classList.toggle('active', critOff);
   }
 
   function setCompactAlarmK(nextValK) {
@@ -664,45 +709,77 @@
       localStorage.setItem('token_meter_compact_alarm_k', String(compactAlarmK));
     } catch {}
     updateCompactAlarmUi();
-    if (currentTelemetry) renderCodingHud();
+    if (currentTelemetry) renderDashboard(currentTelemetry);
   }
 
-  function openInlineAlarmEditor(btnEl, inputEl, e) {
-    if (e) e.stopPropagation();
-    if (!btnEl || !inputEl) return;
-    btnEl.classList.add('hidden');
-    inputEl.classList.remove('hidden');
-    inputEl.value = compactAlarmK > 0 ? String(compactAlarmK) : '';
-    inputEl.focus();
-    inputEl.select();
+  function setCompactCritK(nextValK) {
+    const parsed = parseFloat(nextValK);
+    compactCritK = (isFinite(parsed) && parsed > 0) ? Math.min(10000, Math.round(parsed * 10) / 10) : 0;
+    try {
+      localStorage.setItem('token_meter_compact_crit_k', String(compactCritK));
+    } catch {}
+    updateCompactAlarmUi();
+    if (currentTelemetry) renderDashboard(currentTelemetry);
   }
 
-  function bindInlineAlarmInput(btnEl, inputEl) {
-    if (!btnEl || !inputEl) return;
-    btnEl.addEventListener('click', (e) => openInlineAlarmEditor(btnEl, inputEl, e));
-    const commit = () => {
-      if (inputEl.classList.contains('hidden')) return;
-      const raw = inputEl.value.trim();
-      setCompactAlarmK(raw === '' ? 0 : parseFloat(raw));
-      inputEl.classList.add('hidden');
-      btnEl.classList.remove('hidden');
-    };
-    inputEl.addEventListener('click', (e) => e.stopPropagation());
-    inputEl.addEventListener('blur', commit);
-    inputEl.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commit();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        inputEl.classList.add('hidden');
-        btnEl.classList.remove('hidden');
+  function bindFlagPopover(btnEl, popEl, warnInp, critInp) {
+    if (!btnEl || !popEl) return;
+    const commitAll = () => {
+      if (warnInp) {
+        const rawW = warnInp.value.trim();
+        setCompactAlarmK(rawW === '' ? 0 : parseFloat(rawW));
       }
+      if (critInp) {
+        const rawC = critInp.value.trim();
+        setCompactCritK(rawC === '' ? 0 : parseFloat(rawC));
+      }
+    };
+    btnEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = popEl.classList.contains('hidden');
+      closeAllMenus();
+      if (willOpen) {
+        if (warnInp) warnInp.value = compactAlarmK > 0 ? String(compactAlarmK) : '';
+        if (critInp) critInp.value = compactCritK > 0 ? String(compactCritK) : '';
+        popEl.classList.remove('hidden');
+        if (warnInp) {
+          warnInp.focus();
+          warnInp.select();
+        }
+      }
+    });
+    popEl.addEventListener('click', (e) => e.stopPropagation());
+    [warnInp, critInp].forEach((inp) => {
+      if (!inp) return;
+      inp.addEventListener('change', () => {
+        const raw = inp.value.trim();
+        if (inp === warnInp) setCompactAlarmK(raw === '' ? 0 : parseFloat(raw));
+        else setCompactCritK(raw === '' ? 0 : parseFloat(raw));
+      });
+      inp.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitAll();
+          popEl.classList.add('hidden');
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          popEl.classList.add('hidden');
+        }
+      });
     });
   }
 
-  function buildAreaSparklineSvg(values, colorVar, uid, minVal = null, maxVal = null, alarmThresholdVal = null) {
+  function renderSubItems(el, parts, titleText = '') {
+    if (!el) return;
+    const clean = (parts || []).filter(Boolean);
+    el.innerHTML = clean
+      .map((p) => `<span class="hud-sub-item">${escapeHtml(p)}</span>`)
+      .join('<span class="hud-sub-sep" aria-hidden="true">·</span>');
+    if (titleText) el.title = titleText;
+  }
+
+  function buildAreaSparklineSvg(values, colorVar, uid, minVal = null, maxVal = null, thresholdLines = null) {
     const W = 180;
     const H = 38;
     const topY = 5;
@@ -731,12 +808,19 @@
     }
     const areaD = `${d} L ${W} ${H} L 0 ${H} Z`;
 
-    let alarmLineHtml = '';
-    if (alarmThresholdVal != null && alarmThresholdVal > lo && alarmThresholdVal <= hi) {
-      const alarmNorm = Math.min(1, Math.max(0, (alarmThresholdVal - lo) / span));
-      const alarmY = Number((botY - alarmNorm * (botY - topY)).toFixed(1));
-      alarmLineHtml = `<line x1="0" y1="${alarmY}" x2="${W}" y2="${alarmY}" stroke="var(--tm-warn)" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="3 3"/>`;
-    }
+    const linesArr = Array.isArray(thresholdLines)
+      ? thresholdLines
+      : (thresholdLines != null ? [{ value: thresholdLines, color: 'var(--tm-warn)', opacity: 0.5 }] : []);
+    const thresholdHtml = linesArr
+      .filter(t => t && t.value != null && t.value > lo && t.value <= hi)
+      .map((t) => {
+        const norm = Math.min(1, Math.max(0, (t.value - lo) / span));
+        const ly = Number((botY - norm * (botY - topY)).toFixed(1));
+        const col = t.color || 'var(--tm-warn)';
+        const op = t.opacity != null ? t.opacity : 0.5;
+        return `<line x1="0" y1="${ly}" x2="${W}" y2="${ly}" stroke="${col}" stroke-opacity="${op}" stroke-width="1" stroke-dasharray="3 3"/>`;
+      })
+      .join('');
 
     return `
       <svg class="hud-spark-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
@@ -746,7 +830,7 @@
             <stop offset="100%" stop-color="${colorVar}" stop-opacity="0.0"/>
           </linearGradient>
         </defs>
-        ${alarmLineHtml}
+        ${thresholdHtml}
         <path d="${areaD}" fill="url(#${uid})"/>
         <path d="${d}" fill="none" stroke="${colorVar}" stroke-width="1.75" stroke-linecap="round"/>
       </svg>
@@ -841,7 +925,8 @@
     let valText = '—';
     let badgeText = 'Idle';
     let badgeCls = 'neutral';
-    let metaText = 'No samples yet';
+    let metaParts = ['No samples yet'];
+    let metaTitle = '';
     let ratio = 1;
     let curveState = 'learning';
 
@@ -851,20 +936,20 @@
         const hadCache = Boolean(currentTelemetry.latestTurn?.cacheReadTokens > 0);
         badgeText = hadCache ? 'Warm' : 'Est 5m';
         badgeCls = hadCache ? 'up' : 'neutral';
-        metaText = `idle ${formatDurationShort(elapsedMs)} · ~5m est`;
+        metaParts = [`idle ${formatDurationShort(elapsedMs)}`, '~5m est'];
         ratio = Math.max(0.05, 1 - elapsedMs / DEFAULT_PROVIDER_TTL_MS);
         curveState = hadCache ? 'warm' : 'learning';
       } else {
         valText = elapsedMs != null ? 'Expired' : '—';
         badgeText = elapsedMs != null ? 'Cold' : 'Idle';
         badgeCls = elapsedMs != null ? 'down' : 'neutral';
-        metaText = elapsedMs != null ? `idle ${formatDurationShort(elapsedMs)}` : 'waiting for turns';
+        metaParts = [elapsedMs != null ? `idle ${formatDurationShort(elapsedMs)}` : 'waiting for turns'];
         ratio = elapsedMs != null ? 0 : 1;
         curveState = elapsedMs != null ? 'cold' : 'learning';
       }
     } else if (stat.status === 'bracketed') {
       const boundText = `~${formatTtlBoundShort(stat.maxWarmGapMs)}–${formatTtlBoundShort(stat.minColdGapMs)}`;
-      metaText = boundText;
+      metaParts = [boundText];
       const ceilMs = stat.minColdGapMs;
       ratio = elapsedMs != null && ceilMs > 0 ? Math.max(0, Math.min(1, 1 - elapsedMs / ceilMs)) : 1;
 
@@ -879,7 +964,7 @@
         badgeCls = 'up';
         curveState = 'warm';
       } else if (elapsedMs < stat.minColdGapMs) {
-        valText = `≤ ${formatDurationShort(stat.minColdGapMs - elapsedMs)}`;
+        valText = `≤${formatDurationShort(stat.minColdGapMs - elapsedMs)}`;
         badgeText = 'Expiring';
         badgeCls = 'warn';
         curveState = 'expiring';
@@ -887,7 +972,7 @@
         valText = 'Expired';
         badgeText = 'Cold';
         badgeCls = 'down';
-        metaText = `idle ${formatDurationShort(elapsedMs)} · ${boundText}`;
+        metaParts = [`idle ${formatDurationShort(elapsedMs)}`, boundText];
         ratio = 0;
         curveState = 'cold';
       }
@@ -901,35 +986,35 @@
         valText = `≥${formatTtlBoundShort(stat.maxWarmGapMs)}`;
         badgeText = 'Ready';
         badgeCls = 'neutral';
-        metaText = provenText;
+        metaParts = [provenText];
         curveState = 'warm';
       } else if (elapsedMs < stat.maxWarmGapMs) {
         valText = `~${formatDurationShort(estCeilMs - elapsedMs)}`;
         badgeText = 'Warm';
         badgeCls = 'up';
-        metaText = provenText;
+        metaParts = [provenText];
         curveState = 'warm';
       } else if (elapsedMs < estCeilMs) {
         valText = `~${formatDurationShort(estCeilMs - elapsedMs)}`;
         badgeText = 'Warm';
         badgeCls = 'up';
-        metaText = `${provenText} · ~5m est`;
+        metaParts = [provenText, '~5m est'];
         curveState = ratio < 0.25 ? 'expiring' : 'warm';
       } else {
         valText = `${formatDurationShort(elapsedMs)}`;
         badgeText = 'Expiring';
         badgeCls = 'warn';
-        metaText = `idle · ${provenText}`;
+        metaParts = ['idle', provenText];
         ratio = 0.05;
         curveState = 'expiring';
       }
     } else {
       // upper_bound only
       const ceilMs = stat.minColdGapMs || DEFAULT_PROVIDER_TTL_MS;
-      metaText = `<${formatTtlBoundShort(ceilMs)} window`;
+      metaParts = [`<${formatTtlBoundShort(ceilMs)} window`];
       ratio = elapsedMs != null && ceilMs > 0 ? Math.max(0, Math.min(1, 1 - elapsedMs / ceilMs)) : 1;
       if (elapsedMs != null && elapsedMs < ceilMs) {
-        valText = `≤ ${formatDurationShort(ceilMs - elapsedMs)}`;
+        valText = `≤${formatDurationShort(ceilMs - elapsedMs)}`;
         badgeText = ratio < 0.25 ? 'Expiring' : 'Warm';
         badgeCls = ratio < 0.25 ? 'warn' : 'up';
         curveState = ratio < 0.25 ? 'expiring' : 'warm';
@@ -942,12 +1027,13 @@
       }
     }
 
+    metaTitle = `${badgeText} · ${metaParts.join(' · ')}${stat?.sampleCount ? ` (${stat.sampleCount} samples)` : ''}`;
     hudTtlValue.textContent = valText;
     if (hudTtlBadge) {
       hudTtlBadge.textContent = badgeText;
       hudTtlBadge.className = `hud-delta-pill ${badgeCls}`;
     }
-    if (hudTtlMeta) hudTtlMeta.textContent = metaText;
+    if (hudTtlMeta) renderSubItems(hudTtlMeta, metaParts, metaTitle);
     if (hudTtlSpark) hudTtlSpark.innerHTML = buildTtlDecaySvg(ratio, curveState);
   }
 
@@ -1022,14 +1108,18 @@
       }
     }
     if (hudCacheMeta) {
-      hudCacheMeta.textContent = `min ${minCache.toFixed(1)}% · avg ${avgCache.toFixed(1)}%`;
+      renderSubItems(
+        hudCacheMeta,
+        [`min ${minCache.toFixed(1)}%`, `avg ${avgCache.toFixed(1)}%`],
+        `Warm cache hit rate · min ${minCache.toFixed(1)}% · avg ${avgCache.toFixed(1)}%`
+      );
     }
     if (hudCacheSpark) {
       const loBound = sparkSeries.length ? Math.max(0, Math.min(...sparkSeries) - 10) : 0;
       hudCacheSpark.innerHTML = buildAreaSparklineSvg(sparkSeries, 'var(--tm-cache)', 'hudCacheGrad', loBound, 100);
     }
 
-    // 3. Context Window Card (displayed in thousands K + manual K compact alarm)
+    // 3. Context Window Card (displayed in thousands K + Yellow/Red flag thresholds)
     const hudContextValue = document.getElementById('hudContextValue');
     const hudContextDelta = document.getElementById('hudContextDelta');
     const hudContextMeta = document.getElementById('hudContextMeta');
@@ -1037,14 +1127,13 @@
 
     const activeTok = filteredModel ? (latest.totalTurnTokens || 0) : (ctx.activeTokens || 0);
     const maxLim = model.maxContextTokens || ctx.maxLimit || 1048576;
-    const ctxPct = Math.min(100, Math.max(0, maxLim > 0 ? (activeTok / maxLim) * 100 : 0));
     const remTok = Math.max(0, maxLim - activeTok);
-    const activeK = activeTok / 1000;
+    const flagState = getContextFlagState(activeTok, maxLim);
+    const { actK: activeK, pct: ctxPct, isYellow, isRed } = flagState;
     const ctxSeriesK = relevantTurns.map(t => (t.totalTurnTokens || 0) / 1000);
     const prevK = ctxSeriesK.length > 1 ? ctxSeriesK[ctxSeriesK.length - 2] : activeK;
     const diffTok = activeTok - (prevK * 1000);
-    const alarmTriggered = compactAlarmK > 0 && activeK >= compactAlarmK;
-    const ctxColor = ctxPct >= 80 ? 'var(--tm-crit)' : ((ctxPct >= 50 || alarmTriggered) ? 'var(--tm-warn)' : 'var(--cx-primary)');
+    const ctxColor = isRed ? 'var(--tm-crit)' : (isYellow ? 'var(--tm-warn)' : 'var(--cx-primary)');
 
     updateCompactAlarmUi(activeTok, maxLim);
 
@@ -1055,81 +1144,117 @@
     if (hudContextDelta) {
       if (ctxSeriesK.length > 1 && Math.abs(diffTok) >= 100) {
         hudContextDelta.textContent = formatThousandsK(diffTok, true);
-        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : ((ctxPct >= 50 || alarmTriggered) ? 'warn' : (diffTok < 0 ? 'up' : 'neutral'))}`;
+        hudContextDelta.className = `hud-delta-pill ${isRed ? 'down' : (isYellow ? 'warn' : (diffTok < 0 ? 'up' : 'neutral'))}`;
       } else {
-        hudContextDelta.textContent = alarmTriggered ? 'Compact' : (ctxPct >= 80 ? 'Critical' : (ctxPct >= 50 ? 'Moderate' : 'Optimal'));
-        hudContextDelta.className = `hud-delta-pill ${ctxPct >= 80 ? 'down' : ((ctxPct >= 50 || alarmTriggered) ? 'warn' : 'up')}`;
+        hudContextDelta.textContent = isRed ? 'Critical' : (isYellow ? 'Warn' : 'Optimal');
+        hudContextDelta.className = `hud-delta-pill ${isRed ? 'down' : (isYellow ? 'warn' : 'up')}`;
       }
     }
     if (hudContextMeta) {
-      hudContextMeta.textContent = `of ${formatCompactClean(maxLim)} · ${formatCompactClean(remTok)} free`;
+      renderSubItems(
+        hudContextMeta,
+        [`of ${formatCompactClean(maxLim)}`, `${formatCompactClean(remTok)} free`],
+        `${formatNum(activeTok)} of ${formatNum(maxLim)} tokens (${formatNum(remTok)} free) · Yellow ${formatKLabel(compactAlarmK)} · Red ${formatKLabel(compactCritK)}`
+      );
     }
     if (hudContextSpark) {
-      const ceilK = Math.max(100, compactAlarmK > 0 ? compactAlarmK * 1.15 : 100, ...ctxSeriesK, activeK);
+      const thresholdLines = [];
+      if (compactAlarmK > 0) thresholdLines.push({ value: compactAlarmK, color: 'var(--tm-warn)', opacity: 0.55 });
+      if (compactCritK > 0) thresholdLines.push({ value: compactCritK, color: 'var(--tm-crit)', opacity: 0.6 });
+      const ceilK = Math.max(
+        100,
+        compactAlarmK > 0 ? compactAlarmK * 1.15 : 0,
+        compactCritK > 0 ? compactCritK * 1.15 : 0,
+        ...ctxSeriesK,
+        activeK
+      );
       hudContextSpark.innerHTML = buildAreaSparklineSvg(
         ctxSeriesK.slice(-18),
         ctxColor,
         'hudCtxGrad',
         0,
         ceilK,
-        compactAlarmK > 0 ? compactAlarmK : null
+        thresholdLines
       );
     }
 
-    // 4. Quota Remaining Card (strictly match active model's actual pool so Argon doesn't pick Claude's 5h pool!)
+    // 4. Quota Remaining Card (switchable between 5-hour and Weekly 7d window)
     const hudQuotaValue = document.getElementById('hudQuotaValue');
     const hudQuotaWeeklyBadge = document.getElementById('hudQuotaWeeklyBadge');
     const hudQuotaMeta = document.getElementById('hudQuotaMeta');
     const hudQuotaSpark = document.getElementById('hudQuotaSpark');
 
     const activeModelName = filteredModel?.displayName || latest.modelDisplayName || model.displayName || '';
-    const pools = globalUsageData?.quotaPools || [];
+    const pools5h = quota5hData?.pools || (globalUsageData?.quotaPools || []).filter(p => p.windowType !== 'weekly');
+    const pools7d = quota7dData?.pools || (globalUsageData?.quotaPools || []).filter(p => p.windowType === 'weekly');
     const lowerMod = activeModelName.toLowerCase();
     const poolMatchesActiveModel = (p) => {
       if (!lowerMod) return false;
       return (p.models || []).some(m => m.toLowerCase() === lowerMod || m.toLowerCase().includes(lowerMod)) ||
              (p.correlation?.byModel || []).some(m => m.model.toLowerCase() === lowerMod || m.model.toLowerCase().includes(lowerMod));
     };
-
-    const matched5h = pools.find(p => (p.windowType === 'weekly' ? 'weekly' : '5h') === '5h' && poolMatchesActiveModel(p)) || null;
-    const matchedWk = pools.find(p => p.windowType === 'weekly' && poolMatchesActiveModel(p)) || null;
     const activeBrand = brandOf(activeModelName);
-    const brandFallbackPool = (!matched5h && !matchedWk)
-      ? (pools.find(p => (p.models || []).some(m => brandOf(m) === activeBrand)) || pools[0] || null)
-      : null;
+    const pickWindowPool = (windowPools, primaryFallback) => {
+      if (!windowPools || !windowPools.length) return primaryFallback || null;
+      return windowPools.find(poolMatchesActiveModel)
+        || windowPools.find(p => poolBrandOf(p) === activeBrand || (p.models || []).some(m => brandOf(m) === activeBrand))
+        || primaryFallback
+        || windowPools[0]
+        || null;
+    };
 
-    const primaryPool = matched5h || matchedWk || brandFallbackPool;
+    const isWeeklyView = hudQuotaWindow === '7d';
+    const pool5h = pickWindowPool(pools5h, quota5hData?.primaryPool);
+    const pool7d = pickWindowPool(pools7d, quota7dData?.primaryPool);
+    const selectedPool = isWeeklyView ? pool7d : pool5h;
 
-    if (primaryPool) {
-      const remPct = Math.max(0, Math.min(100, primaryPool.remainingPct ?? (100 - (primaryPool.usedPct || 0))));
-      const isWeeklyPrimary = primaryPool.windowType === 'weekly';
-      if (hudQuotaValue) hudQuotaValue.textContent = `${remPct.toFixed(1)}%`;
+    if (hudQuotaSwitchBtn) {
+      hudQuotaSwitchBtn.classList.toggle('is-weekly', isWeeklyView);
+      hudQuotaSwitchBtn.title = isWeeklyView
+        ? 'Showing Weekly (7d) quota · Click to switch to 5-hour'
+        : 'Showing 5-hour quota · Click to switch to Weekly (7d)';
+      hudQuotaSwitchBtn.setAttribute('aria-pressed', String(isWeeklyView));
+    }
+
+    const r5 = quota5hData?.rolling?.totals?.totalProcessedTokens || 0;
+    const r7 = quota7dData?.rolling?.totals?.totalProcessedTokens || 0;
+
+    if (selectedPool) {
+      const remPct = Math.max(0, Math.min(100, selectedPool.remainingPct ?? (100 - (selectedPool.usedPct || 0))));
+      const winTag = isWeeklyView ? '7d' : '5h';
+      const pName = shortPoolLabel(selectedPool);
+      const resetShort = selectedPool.resetTime ? `↻ ${formatCountdown(selectedPool.msUntilReset)}` : null;
+      const peerInfo = isWeeklyView
+        ? (pool5h ? `5h: ${(pool5h.remainingPct ?? (100 - (pool5h.usedPct || 0))).toFixed(1)}% left` : '5h: —')
+        : (pool7d ? `7d: ${(pool7d.remainingPct ?? (100 - (pool7d.usedPct || 0))).toFixed(1)}% left` : '7d: —');
+      const fullTitle = `${pName} (${winTag}): ${remPct.toFixed(1)}% left${selectedPool.resetTime ? ` · Resets in ${formatCountdown(selectedPool.msUntilReset)}` : ''}\n${peerInfo}\nRolling volume · 5h: ${formatCompactNum(r5)} · 7d: ${formatCompactNum(r7)}`;
+
+      if (hudQuotaValue) {
+        hudQuotaValue.textContent = `${remPct.toFixed(1)}%`;
+        hudQuotaValue.title = fullTitle;
+      }
       if (hudQuotaWeeklyBadge) {
-        if (!isWeeklyPrimary && matchedWk) {
-          const wkRem = Math.max(0, Math.min(100, matchedWk.remainingPct ?? (100 - (matchedWk.usedPct || 0))));
-          hudQuotaWeeklyBadge.textContent = `Wk ${wkRem.toFixed(0)}%`;
-          hudQuotaWeeklyBadge.className = `hud-delta-pill ${wkRem <= 20 ? 'down' : (wkRem <= 50 ? 'warn' : 'up')}`;
-        } else {
-          hudQuotaWeeklyBadge.textContent = isWeeklyPrimary ? 'Weekly' : '5h pool';
-          hudQuotaWeeklyBadge.className = `hud-delta-pill ${remPct <= 20 ? 'down' : (remPct <= 50 ? 'warn' : 'up')}`;
-        }
+        hudQuotaWeeklyBadge.textContent = winTag;
+        hudQuotaWeeklyBadge.title = isWeeklyView ? 'Weekly (7-day) quota window' : '5-hour rolling quota window';
+        hudQuotaWeeklyBadge.className = `hud-delta-pill ${remPct <= 20 ? 'down' : (remPct <= 50 ? 'warn' : 'up')}`;
       }
       if (hudQuotaMeta) {
-        const resetTxt = primaryPool.resetTime ? `Resets ${formatCountdown(primaryPool.msUntilReset)}` : primaryPool.label;
-        hudQuotaMeta.textContent = resetTxt;
-        hudQuotaMeta.title = `${primaryPool.label}: ${remPct.toFixed(1)}% remaining`;
+        renderSubItems(hudQuotaMeta, [pName, resetShort].filter(Boolean), fullTitle);
       }
       if (hudQuotaSpark) {
         const qState = remPct <= 20 ? 'cold' : (remPct <= 50 ? 'expiring' : 'warm');
         hudQuotaSpark.innerHTML = buildTtlDecaySvg(remPct / 100, qState);
       }
     } else {
+      const winTag = isWeeklyView ? '7d' : '5h';
       if (hudQuotaValue) hudQuotaValue.textContent = '—';
       if (hudQuotaWeeklyBadge) {
-        hudQuotaWeeklyBadge.textContent = 'Pool —';
+        hudQuotaWeeklyBadge.textContent = winTag;
         hudQuotaWeeklyBadge.className = 'hud-delta-pill neutral';
       }
-      if (hudQuotaMeta) hudQuotaMeta.textContent = 'No pool data';
+      if (hudQuotaMeta) {
+        renderSubItems(hudQuotaMeta, [`No ${winTag} pool`], `No ${isWeeklyView ? 'weekly (7d)' : '5-hour'} quota pool reported`);
+      }
       if (hudQuotaSpark) hudQuotaSpark.innerHTML = buildTtlDecaySvg(1, 'learning');
     }
 
@@ -1361,19 +1486,17 @@
     return `${mins}m`;
   }
 
-  const BRAND_NAMES = { claude: 'Claude', gpt: 'GPT', gemini: 'Gemini', argon: 'Argon', other: 'Other' };
+  const BRAND_NAMES = { claude: 'Claude', gpt: 'GPT', gemini: 'Gemini', other: 'Other' };
   function brandOf(name) {
     const l = String(name || '').toLowerCase();
     if (/claude|opus|sonnet|haiku|anthropic/.test(l)) return 'claude';
     if (/gpt|openai|\bo[134]\b/.test(l)) return 'gpt';
-    if (/argon|neon|orchestrator/.test(l)) return 'argon';
-    if (/gemini|flash|pro\b/.test(l)) return 'gemini';
+    if (/gemini|flash|pro\b|hydrogen|neon|carbon|orchestrator/.test(l)) return 'gemini';
     return 'other';
   }
   function shortPoolLabel(p) {
     const raw = `${p?.poolId || ''} ${p?.label || ''} ${(p?.models || []).join(' ')}`.toLowerCase();
     if (raw.includes('claude') && (raw.includes('gpt') || raw.includes('oss'))) return 'Claude / GPT';
-    if (raw.includes('argon')) return 'Argon';
     if (raw.includes('gemini')) return 'Gemini';
     if (raw.includes('claude')) return 'Claude';
     if (raw.includes('gpt')) return 'GPT';
@@ -1383,7 +1506,6 @@
   function poolBrandOf(p) {
     const short = shortPoolLabel(p);
     if (short === 'Claude / GPT' || short === 'Claude') return 'claude';
-    if (short === 'Argon') return 'argon';
     if (short === 'Gemini') return 'gemini';
     if (short === 'GPT') return 'gpt';
     return brandOf((p?.models || [])[0] || p?.label);
@@ -1417,14 +1539,15 @@
       const burnShort = (!simpleMode && corr?.hasData && corr.per1Pct)
         ? `~${formatCompactNum(corr.per1Pct.totalProcessedTokens)}/1% · ${resetShort}`
         : resetShort;
-      const winLabel = p.windowType === 'weekly' ? 'Weekly window' : '5h window';
+      const winTag = p.windowType === 'weekly' ? '7d' : '5h';
+      const winLabel = p.windowType === 'weekly' ? '7-day weekly window' : '5-hour rolling window';
       const rowTitle = `${pName} (${winLabel})\nUsed: ${used.toFixed(1)}% · Remaining: ${p.remainingPct.toFixed(1)}%\nResets in ${resetShort}\nClick to view detailed breakdown`;
 
       return `
         <div class="cat-row tool-tree-toggle quota-pool-row" data-pool-id="${escapeHtml(p.poolId)}" role="button" tabindex="0" title="${escapeHtml(rowTitle)}">
           <span class="swatch sw-brand-${pBrand}"></span>
           <span class="cat-label-chev">
-            <span class="cat-label">${escapeHtml(pName)}</span>
+            <span class="cat-label">${escapeHtml(pName)} · ${winTag}</span>
             <svg class="tree-chev" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
           </span>
           <span class="cat-tok">${escapeHtml(burnShort)}</span>
@@ -1432,6 +1555,21 @@
         </div>
       `;
     }).join('');
+
+    const r5 = quota5hData?.rolling;
+    const r7 = quota7dData?.rolling;
+    if (!simpleMode && (r5?.totals?.totalProcessedTokens > 0 || r7?.totals?.totalProcessedTokens > 0)) {
+      const r5Tok = r5?.totals?.totalProcessedTokens || 0;
+      const r7Tok = r7?.totals?.totalProcessedTokens || 0;
+      containerEl.innerHTML += `
+        <div class="cat-row" title="Rolling token consumption across tracked conversations (5-hour vs 7-day)">
+          <span class="swatch sw-total"></span>
+          <span class="cat-label">5h / 7d Usage</span>
+          <span class="cat-tok">${formatCompactNum(r5Tok)} (5h) · ${formatCompactNum(r7Tok)} (7d)</span>
+          <span class="cat-pct">${r5?.conversations || 0}/${r7?.conversations || 0}c</span>
+        </div>
+      `;
+    }
   }
 
   // ---------- SPA Sub-Page Detail View (for Quota Pools, Models, Tool Calls, Compactions, Snapshots) ----------
@@ -1945,7 +2083,10 @@
     // 5-Hour & Weekly Quota Pools (rendered in both Session & Global tabs)
     renderQuotaPoolsInto(sessionQuotaPoolsList, data.quotaPools || [], selectedModel);
     renderQuotaPoolsInto(quotaPoolsList, data.quotaPools || [], selectedModel);
-    if (currentTelemetry) renderCodingHud();
+    if (currentTelemetry) {
+      renderCodingHud();
+      renderTelemetryList();
+    }
     if (activeDetailPage) renderDetailPage();
 
     const filtered = selectedModel !== 'all' ? (data.byModel?.[selectedModel] || null) : null;
@@ -2174,36 +2315,130 @@
     return { label: `${first}–${last}`, title: `Steps ${stepIndices.join(', ')}` };
   }
 
-  // ---------- Quota cost (% of 5h / weekly pool) ----------
-  // Estimated from the pool's learned tokens-per-1% rate (global quota correlation).
-  function findQuotaPool(modelName, windowType) {
-    const pools = globalUsageData?.quotaPools || [];
-    return pools.find(p => p.windowType === windowType && (p.models || []).includes(modelName)) || null;
+  // ---------- Quota cost (% of 5h rolling / 7d weekly pool) ----------
+  function syncQuotaWindowVars(data) {
+    const allPools = data?.quotaPools || [];
+    quota5hData = data?.quota5h || {
+      window: '5h',
+      label: '5-Hour Rolling',
+      windowHours: 5,
+      pools: allPools.filter(p => p.windowType !== 'weekly')
+    };
+    quota7dData = data?.quota7d || {
+      window: '7d',
+      label: '7-Day Weekly',
+      windowHours: 168,
+      pools: allPools.filter(p => p.windowType === 'weekly')
+    };
   }
 
-  // entries: [{ model, tokens }]. Returns { pct, state } or null when the models are not in this window's pool.
-  function computeQuotaCost(entries, windowType) {
-    let pct = 0;
-    let matched = false;
-    let ready = true;
-    for (const e of entries) {
-      const pool = findQuotaPool(e.model, windowType);
-      if (!pool) continue;
-      matched = true;
-      const per1 = pool.correlation?.hasData ? pool.correlation.per1Pct?.totalProcessedTokens : 0;
-      if (!per1) { ready = false; continue; }
-      pct += e.tokens / per1;
+  function matchPoolByModel(pools, modelName) {
+    if (!pools.length || !modelName) return null;
+    const lower = String(modelName).trim().toLowerCase();
+    const exact = pools.find(p => (p.models || []).some(m => m.toLowerCase() === lower));
+    if (exact) return exact;
+    const partial = pools.find(p => (p.models || []).some(m => {
+      const ml = m.toLowerCase();
+      return ml.includes(lower) || lower.includes(ml);
+    }));
+    if (partial) return partial;
+    const b = brandOf(modelName);
+    if (b && b !== 'other') {
+      return pools.find(p => poolBrandOf(p) === b || (p.models || []).some(m => brandOf(m) === b)) || null;
     }
-    if (!matched) return null;
-    return { pct, ready };
+    return null;
+  }
+
+  function findQuota5hPool(modelName) {
+    const pools5h = quota5hData?.pools || (globalUsageData?.quotaPools || []).filter(p => p.windowType !== 'weekly');
+    return matchPoolByModel(pools5h, modelName);
+  }
+
+  function findQuota7dPool(modelName) {
+    const pools7d = quota7dData?.pools || (globalUsageData?.quotaPools || []).filter(p => p.windowType === 'weekly');
+    return matchPoolByModel(pools7d, modelName);
+  }
+
+  function lookupStoredPer1(windowData, modelName) {
+    const stored = windowData?.storedRates;
+    if (!stored || !modelName) return 0;
+    const lower = String(modelName).trim().toLowerCase();
+    for (const [m, rate] of Object.entries(stored.byModel || {})) {
+      const ml = m.toLowerCase();
+      if (ml === lower || ml.includes(lower) || lower.includes(ml)) return rate;
+    }
+    const b = brandOf(modelName);
+    if (b && b !== 'other') {
+      const poolHit = (stored.byPool || []).find(p => brandOf(p.label) === b || brandOf(p.poolId) === b);
+      if (poolHit?.per1TotalTokens) return poolHit.per1TotalTokens;
+    }
+    return 0;
+  }
+
+  function computeWindowQuotaCost(entries, poolResolver, windowData, windowTag) {
+    if (!entries || !entries.length) return null;
+    let pct = 0;
+    let matchedQuota = false;
+    let ready = true;
+    let totalTokens = 0;
+    for (const e of entries) {
+      totalTokens += e.tokens || 0;
+      const pool = poolResolver(e.model);
+      if (pool) {
+        matchedQuota = true;
+        const per1 = (pool.correlation?.hasData && pool.correlation.per1Pct?.totalProcessedTokens)
+          ? pool.correlation.per1Pct.totalProcessedTokens
+          : lookupStoredPer1(windowData, e.model);
+        if (!per1) { ready = false; continue; }
+        pct += (e.tokens || 0) / per1;
+      } else {
+        const storedPer1 = lookupStoredPer1(windowData, e.model);
+        if (storedPer1 > 0) {
+          matchedQuota = true;
+          pct += (e.tokens || 0) / storedPer1;
+        }
+      }
+    }
+    if (matchedQuota && (ready || pct > 0)) {
+      return { pct, ready, mode: 'quota', windowTag };
+    }
+    // Model has no calibrated per-1% pool rate yet -> show rolling window consumption share
+    const rollingTotal = windowData?.rolling?.totals?.totalProcessedTokens || 0;
+    if (totalTokens > 0 && rollingTotal > 0) {
+      return {
+        pct: Math.min(100, (totalTokens / rollingTotal) * 100),
+        ready: true,
+        mode: 'rolling',
+        windowTag,
+        rollingTotal
+      };
+    }
+    return totalTokens > 0 ? { pct: 0, ready: false, mode: 'quota', windowTag } : null;
+  }
+
+  function computeQuota5hCost(entries) {
+    return computeWindowQuotaCost(entries, findQuota5hPool, quota5hData, '5h');
+  }
+
+  function computeQuota7dCost(entries) {
+    return computeWindowQuotaCost(entries, findQuota7dPool, quota7dData, '7d');
   }
 
   function formatQuotaCost(cost) {
     if (!cost) return null;
-    if (!cost.ready && cost.pct === 0) return 'learning…';
+    if (!cost.ready && cost.pct === 0) return { text: 'calibrating…', title: `Calibrating ${cost.windowTag || ''} quota burn rate` };
     const v = cost.pct;
     const txt = v >= 10 ? v.toFixed(1) : (v >= 0.01 ? v.toFixed(2) : (v > 0 ? '<0.01' : '0'));
-    return `~${txt}%${cost.ready ? '' : ' (partial)'}`;
+    if (cost.mode === 'rolling') {
+      return {
+        text: `${txt}% of ${cost.windowTag}`,
+        title: `${txt}% of rolling ${cost.windowTag} volume (${formatCompactNum(cost.rollingTotal)} tokens) · calibrating exact pool rate`
+      };
+    }
+    return {
+      text: `~${txt}%${cost.ready ? '' : ' (partial)'}`,
+      title: `Estimated ~${txt}% of ${cost.windowTag || ''} quota pool`
+    };
   }
 
   function turnQuotaEntry(t) {
@@ -2213,19 +2448,19 @@
   function quotaCostRows(entries) {
     const rows = [];
     if (telemetryFields.quota5h) {
-      const v = formatQuotaCost(computeQuotaCost(entries, '5h'));
-      if (v) rows.push({ dot: 'dot-total', label: '5h Quota', value: v, valClass: 'val-quota' });
+      const v5h = formatQuotaCost(computeQuota5hCost(entries));
+      if (v5h) rows.push({ dot: 'dot-total', label: '5h Quota', value: v5h.text, title: v5h.title, valClass: 'val-quota' });
     }
     if (telemetryFields.quotaWeekly) {
-      const v = formatQuotaCost(computeQuotaCost(entries, 'weekly'));
-      if (v) rows.push({ dot: 'dot-total', label: 'Weekly Quota', value: v, valClass: 'val-quota' });
+      const v7d = formatQuotaCost(computeQuota7dCost(entries));
+      if (v7d) rows.push({ dot: 'dot-total', label: '7d Quota', value: v7d.text, title: v7d.title, valClass: 'val-quota' });
     }
     return rows;
   }
 
   function renderLedgerRows(rows) {
     return `<div class="item-ledger">${rows.map(r => `
-      <div class="item-ledger-row">
+      <div class="item-ledger-row"${r.title ? ` title="${escapeHtml(r.title)}"` : ''}>
         <span class="item-ledger-key"><span class="item-ledger-dot ${r.dot}"></span>${escapeHtml(r.label)}</span>
         <span class="item-ledger-val ${r.valClass || ''}">${r.html ? r.value : escapeHtml(r.value)}</span>
       </div>
@@ -2260,11 +2495,13 @@
       const showAnyField = showChatPrimary || Boolean(routingHtml) || telemetryFields.calls || telemetryFields.cache;
 
       const cacheDot = (p.promptCacheStatus === 'warm_hit' || p.promptCacheStatus === 'cross_model_hit') ? 'dot-cache' : 'dot-total';
+      const promptQuotaEntries = (currentTelemetry?.turns || []).filter(x => x.promptNumber === p.promptNumber).map(turnQuotaEntry);
       const ledgerRows = simpleMode
         ? [
             { dot: 'dot-cache', label: 'Cache Read', value: `${formatCompactNum(p.cacheRead)} (${p.cacheEfficiencyPct}%)`, valClass: 'val-cache' },
             { dot: 'dot-input', label: 'New Input', value: formatCompactNum(p.newInput) },
             { dot: 'dot-output', label: 'Output', value: formatCompactNum(p.output) },
+            ...quotaCostRows(promptQuotaEntries),
             { dot: 'dot-total', label: 'Context', value: `${formatCompactNum(p.endingContext)} (${p.endingContextPct}%)`, valClass: 'val-strong' }
           ]
         : [
@@ -2272,7 +2509,7 @@
             { dot: 'dot-cache', label: 'Cache Read', value: formatNum(p.cacheRead), valClass: 'val-cache' },
             { dot: 'dot-think', label: 'Thinking', value: formatNum(p.thinking), valClass: 'val-think' },
             { dot: 'dot-output', label: 'Output', value: formatNum(p.output) },
-            ...quotaCostRows((currentTelemetry?.turns || []).filter(x => x.promptNumber === p.promptNumber).map(turnQuotaEntry)),
+            ...quotaCostRows(promptQuotaEntries),
             { dot: cacheDot, label: 'Cache', value: renderCacheStatusChips(p.gapSincePrevPromptMs, p.promptCacheStatus, p.cachedModelShort || p.modelsUsedShort?.[0], p.prevPromptModelShort), html: true },
             { dot: 'dot-total', label: 'Ending Context', value: `${formatCompactNum(p.endingContext)} (${p.endingContextPct}%)`, valClass: 'val-strong' }
           ];
@@ -2364,6 +2601,7 @@
             { dot: 'dot-cache', label: 'Cache Read', value: `${formatCompactNum(t.cacheReadTokens)} (${t.cacheEfficiencyPct}%)`, valClass: 'val-cache' },
             { dot: 'dot-input', label: 'New Input', value: formatCompactNum(t.inputTokens) },
             { dot: 'dot-output', label: 'Output', value: formatCompactNum(t.outputTokens) },
+            ...quotaCostRows([turnQuotaEntry(t)]),
             { dot: 'dot-total', label: 'Total Turn', value: formatCompactNum(t.totalTurnTokens), valClass: 'val-strong' }
           ]
         : [
@@ -2726,6 +2964,7 @@
         const data = await res.json();
         if (!data.error) {
           globalUsageData = data;
+          syncQuotaWindowVars(data);
           renderGlobalView(data);
         }
       } catch (err) {
@@ -2938,6 +3177,8 @@
     if (headerMenuBtn) headerMenuBtn.setAttribute('aria-expanded', 'false');
     if (telemetryMenu) telemetryMenu.classList.remove('open');
     if (telemetryMenuBtn) telemetryMenuBtn.setAttribute('aria-expanded', 'false');
+    if (hudContextFlagPopover) hudContextFlagPopover.classList.add('hidden');
+    if (windowContextFlagPopover) windowContextFlagPopover.classList.add('hidden');
   }
 
   function bindPopoverMenu(btn, menu) {
@@ -2976,19 +3217,30 @@
     });
   }
 
-  bindInlineAlarmInput(windowCompactAlarmBtn, windowCompactAlarmInlineInput);
-  bindInlineAlarmInput(hudCompactAlarmBtn, hudCompactAlarmInlineInput);
+  if (hudQuotaSwitchBtn) {
+    hudQuotaSwitchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hudQuotaWindow = hudQuotaWindow === '7d' ? '5h' : '7d';
+      try {
+        localStorage.setItem('token_meter_hud_quota_window', hudQuotaWindow);
+      } catch {}
+      if (currentTelemetry) renderCodingHud();
+    });
+  }
+
+  bindFlagPopover(windowCompactAlarmBtn, windowContextFlagPopover, windowWarnFlagInput, windowCritFlagInput);
+  bindFlagPopover(hudCompactAlarmBtn, hudContextFlagPopover, hudWarnFlagInput, hudCritFlagInput);
 
   if (compactAlarmKInput) {
-    const applyMenuK = () => {
+    const applyMenuWarnK = () => {
       const raw = compactAlarmKInput.value.trim();
       setCompactAlarmK(raw === '' ? 0 : parseFloat(raw));
     };
-    compactAlarmKInput.addEventListener('change', applyMenuK);
+    compactAlarmKInput.addEventListener('change', applyMenuWarnK);
     compactAlarmKInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        applyMenuK();
+        applyMenuWarnK();
         compactAlarmKInput.blur();
       }
     });
@@ -2997,6 +3249,26 @@
     compactAlarmOffBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       setCompactAlarmK(0);
+    });
+  }
+  if (compactCritKInput) {
+    const applyMenuCritK = () => {
+      const raw = compactCritKInput.value.trim();
+      setCompactCritK(raw === '' ? 0 : parseFloat(raw));
+    };
+    compactCritKInput.addEventListener('change', applyMenuCritK);
+    compactCritKInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyMenuCritK();
+        compactCritKInput.blur();
+      }
+    });
+  }
+  if (compactCritOffBtn) {
+    compactCritOffBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setCompactCritK(0);
     });
   }
   updateCompactAlarmUi();
@@ -3160,8 +3432,8 @@
     if (activeTab === 'session' && currentTelemetry) renderCacheLifespanStrip();
   }, 1000);
 
-  // Background quota-cycle monitor (checks every 60s so 100% auto-snapshots fire even while on Session tab)
+  // Background quota-cycle monitor (checks every 30s so 5h/weekly quotas & telemetry stay fresh)
   setInterval(() => {
     fetchGlobalUsage();
-  }, 60000);
+  }, 30000);
 })();

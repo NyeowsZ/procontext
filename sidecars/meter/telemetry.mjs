@@ -465,6 +465,7 @@ export async function getQuotaPools(forceRefresh = false) {
       usedIds.add(poolId);
       const remainingPct = parseFloat((b.remainingFraction * 100).toFixed(1));
       const usedPct = parseFloat(((1 - b.remainingFraction) * 100).toFixed(1));
+      const exactUsedPct = parseFloat(((1 - b.remainingFraction) * 100).toFixed(2));
       return {
         poolId,
         label,
@@ -472,6 +473,7 @@ export async function getQuotaPools(forceRefresh = false) {
         remainingFraction: b.remainingFraction,
         remainingPct,
         usedPct,
+        exactUsedPct,
         resetTime: b.resetTime,
         msUntilReset: Math.max(0, b.resetMs - nowMs),
         models: b.models

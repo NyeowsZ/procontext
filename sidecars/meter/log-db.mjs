@@ -16,7 +16,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-export const PRODUCER_VERSION = '1.1.0';
+export const PRODUCER_VERSION = '1.1.1';
 export const CURRENT_SCHEMA_VER = 1;
 export const DEFAULT_LOG_DB_PATH = join(
   homedir(),

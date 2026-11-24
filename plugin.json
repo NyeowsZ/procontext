@@ -1,7 +1,7 @@
 {
   "name": "token-context-meter",
   "displayName": "Procontext",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Real-time server-side token usage telemetry per AI turn and live context window consumption meter matching Antigravity CLI /context accuracy.",
   "author": "Antigravity Defensive Research & Tooling",
   "homepage": "https://antigravity.google",

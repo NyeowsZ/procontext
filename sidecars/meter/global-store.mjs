@@ -296,12 +296,61 @@ function computeAllTimeFromCache(convCache) {
   return { allTimeTotals, allTimeByModel };
 }
 
+function computeRollingWindowFromCache(convCache, windowMs, nowMs = Date.now()) {
+  const totals = emptyTotals();
+  const byModel = {};
+  let conversations = 0;
+  for (const entry of Object.values(convCache || {})) {
+    if (!entry?.totals || !entry.mtime) continue;
+    if (nowMs - entry.mtime > windowMs) continue;
+    conversations++;
+    addTotals(totals, entry.totals);
+    for (const [mName, mTot] of Object.entries(entry.byModel || {})) {
+      if (!byModel[mName]) byModel[mName] = emptyTotals();
+      addTotals(byModel[mName], mTot);
+    }
+  }
+  return { conversations, totals, byModel };
+}
+
+function extractStoredPer1Rates(quotaCycles, windowType) {
+  const byModel = {};
+  const byPool = [];
+  for (const c of Object.values(quotaCycles || {})) {
+    if (!c || (c.windowType === 'weekly' ? 'weekly' : '5h') !== windowType) continue;
+    const obsPct = Number(c.observedPct || 0);
+    const obsTok = Number(c.observedTokens?.totalProcessedTokens || 0);
+    const minObs = windowType === 'weekly' ? 0.1 : 0.5;
+    if (obsPct < minObs || obsTok <= 0) continue;
+    const poolPer1 = Math.round(obsTok / obsPct);
+    byPool.push({ poolId: c.poolId, label: c.label || c.poolId, per1TotalTokens: poolPer1, observedPct: parseFloat(obsPct.toFixed(2)) });
+    for (const [mName, mTot] of Object.entries(c.observedByModel || {})) {
+      const mTok = Number(mTot?.totalProcessedTokens || 0);
+      if (mTok <= 0) continue;
+      const share = mTok / obsTok;
+      const estPct = share * obsPct;
+      if (estPct >= 0.05) {
+        byModel[mName] = Math.round(mTok / estPct);
+      } else if (!byModel[mName]) {
+        byModel[mName] = poolPer1;
+      }
+    }
+  }
+  return { byModel, byPool };
+}
+
 function sumModelsInPool(byModelMap, poolModels) {
-  const poolSet = new Set((poolModels || []).map(m => m.toLowerCase()));
+  const poolList = (poolModels || []).map(m => String(m).trim().toLowerCase()).filter(Boolean);
+  const poolSet = new Set(poolList);
+  const stripParens = (s) => s.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  const poolBaseSet = new Set(poolList.map(stripParens));
   const total = emptyTotals();
   const matched = {};
   for (const [mName, mTot] of Object.entries(byModelMap || {})) {
-    if (poolSet.has(mName.toLowerCase())) {
+    const ml = mName.trim().toLowerCase();
+    const mlBase = stripParens(ml);
+    const hit = poolSet.has(ml) || poolBaseSet.has(mlBase) || poolList.some(pm => pm.includes(mlBase) || mlBase.includes(stripParens(pm)));
+    if (hit) {
       addTotals(total, mTot);
       matched[mName] = { ...mTot };
     }
@@ -314,7 +363,8 @@ function buildPoolCorrelation(pool, cycle, fallbackByModel = null) {
   const obsTot = cycle?.observedTokens || emptyTotals();
   const obsByModel = cycle?.observedByModel || {};
 
-  if (obsPct < 0.5 || obsTot.totalProcessedTokens <= 0) {
+  const minObs = pool.windowType === 'weekly' ? 0.1 : 0.5;
+  if (obsPct < minObs || obsTot.totalProcessedTokens <= 0) {
     // If not enough observed cycle delta yet, extract fallback models from session / current usage
     let fallbackModels = [];
     if (fallbackByModel && typeof fallbackByModel === 'object') {
@@ -459,8 +509,56 @@ function evaluateQuotaCycles(accountBucket, quotaPools, allTimeTotals, allTimeBy
   let mutated = false;
   const nowIso = new Date().toISOString();
 
+  // Remove deprecated Argon-only quota cycles
+  for (const pid of Object.keys(accountBucket.quotaCycles || {})) {
+    if (pid.includes('argon')) {
+      delete accountBucket.quotaCycles[pid];
+      mutated = true;
+    }
+  }
+
   for (const pool of (quotaPools || [])) {
-    const existing = accountBucket.quotaCycles[pool.poolId];
+    let existing = accountBucket.quotaCycles[pool.poolId];
+
+    // Seed unified 5h:gemini cycle from legacy 5h:gemini-* cycles if it has no observed correlation yet
+    if (pool.poolId === '5h:gemini' && (!existing || ((existing.observedPct || 0) === 0 && (existing.observedTokens?.totalProcessedTokens || 0) === 0))) {
+      const legacyKeys = Object.keys(accountBucket.quotaCycles || {}).filter(
+        k => k.startsWith('5h:gemini-') && (accountBucket.quotaCycles[k]?.observedPct || 0) > 0
+      );
+      if (legacyKeys.length > 0) {
+        if (!existing) {
+          existing = {
+            poolId: pool.poolId,
+            label: pool.label,
+            windowType: pool.windowType,
+            windowHours: pool.windowType === 'weekly' ? 168 : 5,
+            lastResetTime: pool.resetTime,
+            lastUsedPct: pool.usedPct,
+            cycleStartAt: nowIso,
+            cycleStartTotals: { ...allTimeTotals },
+            cycleStartByModel: cloneTotalsMap(allTimeByModel),
+            lastCheckByModel: cloneTotalsMap(allTimeByModel),
+            observedPct: 0,
+            observedTokens: emptyTotals(),
+            observedByModel: {},
+            autoSnapshottedForResetTime: null
+          };
+          accountBucket.quotaCycles[pool.poolId] = existing;
+        }
+        for (const lk of legacyKeys) {
+          const leg = accountBucket.quotaCycles[lk];
+          existing.observedPct += Number(leg.observedPct || 0);
+          addTotals(existing.observedTokens, leg.observedTokens || emptyTotals());
+          for (const [mName, mTot] of Object.entries(leg.observedByModel || {})) {
+            if (!existing.observedByModel[mName]) existing.observedByModel[mName] = emptyTotals();
+            addTotals(existing.observedByModel[mName], mTot);
+          }
+          delete accountBucket.quotaCycles[lk];
+        }
+        mutated = true;
+      }
+    }
+
     if (!existing) {
       accountBucket.quotaCycles[pool.poolId] = {
         poolId: pool.poolId,
@@ -485,30 +583,41 @@ function evaluateQuotaCycles(accountBucket, quotaPools, allTimeTotals, allTimeBy
     if (!existing.observedByModel) existing.observedByModel = {};
     if (!existing.lastCheckByModel) existing.lastCheckByModel = cloneTotalsMap(allTimeByModel);
 
-    // Accumulate incremental quota % vs token delta for this pool's models (when same window & quota moved up)
-    const sameWindow = existing.lastResetTime === pool.resetTime;
-    const pctStep = sameWindow ? (pool.usedPct - (existing.lastUsedPct || 0)) : 0;
+    // Accumulate incremental quota % vs token delta for this pool's models
+    // Preserve baseline until a measurable delta + token step is actually recorded so micro-increments aren't dropped
+    const curUsedPct = pool.exactUsedPct != null ? pool.exactUsedPct : (pool.usedPct || 0);
+    const prevUsedPct = Number(existing.lastUsedPct || 0);
+    const prevResetMs = Date.parse(existing.lastResetTime || '');
+    const curResetMs = Date.parse(pool.resetTime || '');
+    const resetDeltaMs = (!Number.isNaN(prevResetMs) && !Number.isNaN(curResetMs))
+      ? Math.abs(curResetMs - prevResetMs)
+      : Infinity;
+    const driftTolMs = pool.windowType === 'weekly' ? 3600000 : 300000;
+    const sameWindow = (existing.lastResetTime === pool.resetTime || resetDeltaMs <= driftTolMs) &&
+      curUsedPct >= prevUsedPct - 0.05;
+    const pctStep = sameWindow ? Math.max(0, curUsedPct - prevUsedPct) : 0;
+    const minStep = pool.windowType === 'weekly' ? 0.02 : 0.05;
     const stepByModelDiff = diffByModel(allTimeByModel, existing.lastCheckByModel);
     const poolStep = sumModelsInPool(stepByModelDiff, pool.models);
 
-    if (pctStep > 0.05 && poolStep.total.totalProcessedTokens > 0) {
-      existing.observedPct = (existing.observedPct || 0) + pctStep;
+    if (pctStep >= minStep && poolStep.total.totalProcessedTokens > 0) {
+      existing.observedPct = parseFloat(((existing.observedPct || 0) + pctStep).toFixed(3));
       addTotals(existing.observedTokens, poolStep.total);
       for (const [mName, mTot] of Object.entries(poolStep.byModel)) {
         if (!existing.observedByModel[mName]) existing.observedByModel[mName] = emptyTotals();
         addTotals(existing.observedByModel[mName], mTot);
       }
       existing.lastCheckByModel = cloneTotalsMap(allTimeByModel);
+      existing.lastUsedPct = curUsedPct;
+      existing.lastResetTime = pool.resetTime;
       mutated = true;
     } else if (!sameWindow) {
       existing.lastCheckByModel = cloneTotalsMap(allTimeByModel);
-      mutated = true;
-    }
-
-    // Auto-reset snapshot creation removed (caused fragmented snapshots on resetTime drift).
-    if (existing.lastResetTime !== pool.resetTime || existing.lastUsedPct !== pool.usedPct) {
+      existing.lastUsedPct = curUsedPct;
       existing.lastResetTime = pool.resetTime;
-      existing.lastUsedPct = pool.usedPct;
+      mutated = true;
+    } else if (existing.lastResetTime !== pool.resetTime) {
+      existing.lastResetTime = pool.resetTime;
       mutated = true;
     }
   }
@@ -617,14 +726,41 @@ export async function getGlobalUsage() {
   // Attach per-1% token correlation & remaining runway estimates to each quota pool
   const enrichedQuotaPools = (quotaPools || []).map(pool => ({
     ...pool,
+    windowHours: pool.windowType === 'weekly' ? 168 : 5,
     correlation: buildPoolCorrelation(pool, accountBucket.quotaCycles[pool.poolId], currentByModel)
   }));
+
+  const pools5h = enrichedQuotaPools.filter(p => p.windowType === '5h');
+  const pools7d = enrichedQuotaPools.filter(p => p.windowType === 'weekly');
+
+  const nowMs = Date.now();
+  const rolling5h = computeRollingWindowFromCache(store.convCache, 5 * 3600 * 1000, nowMs);
+  const rolling7d = computeRollingWindowFromCache(store.convCache, 7 * 24 * 3600 * 1000, nowMs);
+  const stored5h = extractStoredPer1Rates(accountBucket.quotaCycles, '5h');
+  const stored7d = extractStoredPer1Rates(accountBucket.quotaCycles, 'weekly');
+
+  const summarizeWindow = (windowKey, label, windowHours, list, rolling, storedRates) => ({
+    window: windowKey,
+    label,
+    windowHours,
+    pools: list,
+    primaryPool: list[0] || null,
+    usedPct: list[0]?.usedPct ?? null,
+    remainingPct: list[0]?.remainingPct ?? null,
+    resetTime: list[0]?.resetTime ?? null,
+    msUntilReset: list[0]?.msUntilReset ?? null,
+    hasData: list.some(p => p.correlation?.hasData),
+    rolling,
+    storedRates
+  });
 
   if (dirty) saveStore(store);
 
   return {
     account,
     quotaPools: enrichedQuotaPools,
+    quota5h: summarizeWindow('5h', '5-Hour Rolling', 5, pools5h, rolling5h, stored5h),
+    quota7d: summarizeWindow('7d', '7-Day Weekly', 168, pools7d, rolling7d, stored7d),
     updatedAt: new Date().toISOString(),
     conversationCount: convCount,
     pendingCount: remainingToScan,

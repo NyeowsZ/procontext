@@ -43,3 +43,14 @@
   - Wired incremental log appending into `global-store.mjs`, added `/api/global/audit` and `/api/global/take` in `main.mjs`, and added **Take All** / **Take Convo** buttons in the Global tab.
   - Added `get_global_audit` and `capture_global_log` tools to `mcp/server.mjs`.
   - Added `test/global-log.test.mjs` (`npm test`).
+
+
+---
+
+## [1.1.1] - 2026-11-25
+### Added
+- Merged live **v1.0.2** telemetry & HUD improvements into the **v1.1.0** append-only log release:
+  - Dual Yellow/Red **Context Flags** (`compactAlarmK` / `compactCritK`) with inline popovers, bar ticks, and sparkline threshold lines.
+  - Switchable **5h / 7d Quota** HUD card (`hudQuotaSwitchBtn`) backed by `quota5h` and `quota7d` rolling window summaries, `storedRates`, and rolling-share fallback.
+  - Finer `exactUsedPct` tracking, quota-cycle drift tolerance, fuzzy pool-model matching, legacy `5h:gemini-*` cycle consolidation, and deprecation cleanup of Argon-only cycles.
+  - Rolling 5h/7d consumption summary line in MCP `get_quota_status` and 30-second HUD sync refresh.
